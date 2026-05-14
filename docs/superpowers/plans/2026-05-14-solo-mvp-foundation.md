@@ -10,6 +10,18 @@
 
 ---
 
+## Visual Baseline Update
+
+The approved first UI direction is an interactive calendar plus interactive map workspace. The web app should not use a simple card-only landing page as the final shape. The first implementation can use a lightweight CSS-positioned mock Europe map instead of Mapbox or MapLibre, but the layout must have three coordinated areas:
+
+- Left panel: home city, preference lens, excluded destinations, and a bank-holiday-aware calendar with multiple selected travel windows.
+- Center map: destination pins for ranked recommendations, including a visible home-city marker.
+- Right panel: ranked recommendations for the selected travel window, with scores, reasons, and caveats.
+
+Clicking a travel window should change which recommendation group is emphasized. Clicking a destination pin or card can be a no-op in the first slice, but the UI should be structured so a detail drawer or itinerary preview can be added later. This visual baseline supersedes older card-only page snippets in Task 8 and Task 10.
+
+---
+
 ## File Structure
 
 - Create `package.json`: root workspace scripts for web tests, API tests, linting, formatting, and dev.
@@ -991,7 +1003,7 @@ git commit -m "feat: add window-aware itinerary route"
 
 ---
 
-## Task 8: Next.js Web Skeleton
+## Task 8: Next.js Calendar-Map Web Skeleton
 
 **Files:**
 - Create: `apps/web/package.json`
@@ -1012,13 +1024,14 @@ import { render, screen } from "@testing-library/react";
 import Page from "./page";
 
 describe("Solo homepage", () => {
-  it("renders the travel calendar workflow", () => {
+  it("renders the travel calendar map workflow", () => {
     render(<Page />);
 
     expect(screen.getByRole("heading", { name: "Solo" })).toBeInTheDocument();
-    expect(screen.getByText("Plan long weekends from your home city.")).toBeInTheDocument();
+    expect(screen.getByText("Long-weekend map planner")).toBeInTheDocument();
     expect(screen.getByLabelText("Home city")).toBeInTheDocument();
     expect(screen.getByText("Candidate travel windows")).toBeInTheDocument();
+    expect(screen.getByLabelText("Europe destination map")).toBeInTheDocument();
   });
 });
 ```
@@ -1247,7 +1260,7 @@ button {
 }
 ```
 
-Create `apps/web/src/app/page.tsx`:
+Create `apps/web/src/app/page.tsx` using the calendar-map workspace described in the Visual Baseline Update. The initial static page must include a left calendar panel, center map area, and right recommendation panel:
 
 ```tsx
 const travelWindows = [
@@ -1268,7 +1281,7 @@ export default function Page() {
         <section className="stack">
           <div>
             <h1>Solo</h1>
-            <p>Plan long weekends from your home city.</p>
+            <p>Long-weekend map planner</p>
           </div>
 
           <div className="panel stack">
@@ -1300,6 +1313,13 @@ export default function Page() {
 
             <button type="button">Find destinations</button>
           </div>
+        </section>
+
+        <section className="map" aria-label="Europe destination map">
+          <div className="pin home">London</div>
+          <div className="pin">Lisbon 92</div>
+          <div className="pin pin-alt">Seville 89</div>
+          <div className="pin pin-gold">Porto 84</div>
         </section>
 
         <section className="panel">
@@ -1477,7 +1497,7 @@ git commit -m "feat: add frontend travel window helpers"
 
 ---
 
-## Task 10: Connect Web UI To Recommendation API
+## Task 10: Connect Calendar-Map UI To Recommendation API
 
 **Files:**
 - Modify: `apps/web/src/app/page.tsx`
@@ -1519,7 +1539,7 @@ describe("Solo homepage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("loads recommendations from the API", async () => {
+  it("loads recommendations from the API into the map workspace", async () => {
     render(<Page />);
 
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
@@ -1587,7 +1607,7 @@ export default function Page() {
         <section className="stack">
           <div>
             <h1>Solo</h1>
-            <p>Plan long weekends from your home city.</p>
+            <p>Long-weekend map planner</p>
           </div>
 
           <div className="panel stack">
@@ -1622,6 +1642,17 @@ export default function Page() {
             </button>
             {status === "error" ? <p role="alert">Could not load recommendations.</p> : null}
           </div>
+        </section>
+
+        <section className="map" aria-label="Europe destination map">
+          <div className="pin home">{homeCity}</div>
+          {groups.flatMap((group) =>
+            group.recommendations.slice(0, 5).map((item, index) => (
+              <button className="pin" type="button" key={`${group.travel_window.id}-${item.destination.id}`}>
+                {item.destination.city} {item.score}
+              </button>
+            )),
+          )}
         </section>
 
         <section className="panel">

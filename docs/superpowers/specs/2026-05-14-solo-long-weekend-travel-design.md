@@ -13,6 +13,7 @@ Flight price monitoring is a future capability. The initial architecture keeps r
 - Help a flexible traveler answer: "Where should I go for these upcoming dates?"
 - Make bank holidays and long weekends visible in the date selection flow.
 - Support multiple candidate travel windows so users can plan several trips across the year.
+- Present travel windows and destinations together through an interactive calendar and map workspace.
 - Recommend multiple destinations per travel window based on preferences, seasonality, destination fit, and exclusions.
 - Generate useful, lightweight itineraries that match the selected travel window length and the user's preferred travel pace.
 - Allow anonymous exploration, with optional Google SSO to save preferences, exclusions, travel windows, recommendations, itineraries, and trips.
@@ -39,8 +40,8 @@ The first target user is a solo flexible traveler based in Europe. They have a h
 3. The user selects one or more candidate travel windows.
 4. Solo asks preference questions covering pace, climate, food, history, museums, nightlife, nature, budget sensitivity, popularity preference, and comfort constraints.
 5. The user excludes cities or countries they have already visited or do not want recommended.
-6. Solo generates destination shortlists grouped by travel window.
-7. The user opens a destination recommendation to see why it fits, seasonal notes, practical caveats, and an itinerary sized to the selected window.
+6. Solo shows matching destinations on an interactive map and in a recommendation panel grouped by travel window.
+7. The user opens a destination recommendation from the map or panel to see why it fits, seasonal notes, practical caveats, and an itinerary sized to the selected window.
 8. The user can continue anonymously or sign in with Google to save their profile, exclusions, travel windows, recommendations, itineraries, and trips.
 
 ### Returning Flow
@@ -70,6 +71,7 @@ TypeScript web app using Next.js. Responsibilities:
 - Returning-user dashboard.
 - Home city capture.
 - Multi-range calendar selection with bank-holiday highlighting.
+- Interactive map workspace showing destination fit for the selected travel window.
 - Preference collection.
 - Destination and country exclusions.
 - Recommendation results grouped by travel window.
