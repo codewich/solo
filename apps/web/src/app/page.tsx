@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { DestinationMap } from "./destination-map";
 import { fetchRecommendations } from "@/lib/api";
 import { formatWindowLabel } from "@/lib/date-windows";
 import type { RecommendationGroup, TravelWindow } from "@/lib/types";
@@ -16,6 +17,13 @@ type PlanningWindow = TravelWindow & {
 type DraftRange = {
   start_date: string;
   end_date: string;
+};
+
+type CalendarDate = {
+  day: string;
+  isoDate: string;
+  label: string;
+  isCurrentMonth: boolean;
 };
 
 const initialTravelWindows: PlanningWindow[] = [
@@ -72,55 +80,58 @@ const staticRecommendations = [
   },
 ];
 
-const pinClasses = ["pin-lisbon", "pin-seville", "pin-porto", "pin-prague", "pin-copenhagen"];
-
-const calendarDays = [
-  "27",
-  "28",
-  "29",
-  "30",
-  "1",
-  "2",
-  "3",
-  "4",
-  "5",
-  "6",
-  "7",
-  "8",
-  "9",
-  "10",
-  "11",
-  "12",
-  "13",
-  "14",
-  "15",
-  "16",
-  "17",
-  "18",
-  "19",
-  "20",
-  "21",
-  "22",
-  "23",
-  "24",
-  "25",
-  "26",
-  "27",
-  "28",
-  "29",
-  "30",
-  "31",
-];
-
-const mayCalendarDates = calendarDays.map((day, index) => {
-  const month = index < 4 ? "04" : "05";
-  const year = 2026;
-  return {
-    day,
-    isoDate: `${year}-${month}-${day.padStart(2, "0")}`,
-    label: `${Number(day)} ${month === "04" ? "Apr" : "May"} 2026`,
-  };
+const monthTitle = new Intl.DateTimeFormat("en-GB", {
+  month: "long",
+  timeZone: "UTC",
+  year: "numeric",
 });
+
+const dayLabel = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+  year: "numeric",
+});
+
+const gbHolidayDates = new Map([
+  ["2026-05-04", "Early May bank holiday"],
+  ["2026-05-25", "Spring bank holiday"],
+  ["2026-08-31", "Summer bank holiday"],
+  ["2026-12-25", "Christmas Day"],
+  ["2026-12-28", "Boxing Day substitute"],
+]);
+
+function padDatePart(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function toIsoDate(date: Date): string {
+  return `${date.getUTCFullYear()}-${padDatePart(date.getUTCMonth() + 1)}-${padDatePart(
+    date.getUTCDate(),
+  )}`;
+}
+
+function formatCalendarTitle(year: number, monthIndex: number): string {
+  return monthTitle.format(new Date(Date.UTC(year, monthIndex, 1)));
+}
+
+function buildCalendarDates(year: number, monthIndex: number): CalendarDate[] {
+  const firstOfMonth = new Date(Date.UTC(year, monthIndex, 1));
+  const mondayOffset = (firstOfMonth.getUTCDay() + 6) % 7;
+  const firstVisibleDate = new Date(Date.UTC(year, monthIndex, 1 - mondayOffset));
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(firstVisibleDate);
+    date.setUTCDate(firstVisibleDate.getUTCDate() + index);
+
+    return {
+      day: String(date.getUTCDate()),
+      isoDate: toIsoDate(date),
+      label: dayLabel.format(date),
+      isCurrentMonth: date.getUTCMonth() === monthIndex,
+    };
+  });
+}
 
 function isWithinRange(date: string, startDate: string, endDate: string): boolean {
   return date >= startDate && date <= endDate;
@@ -147,6 +158,8 @@ export default function Page() {
   const [pace, setPace] = useState<"rushed" | "balanced" | "wandering">("wandering");
   const [travelWindows, setTravelWindows] = useState(initialTravelWindows);
   const [selectedTravelWindowId, setSelectedTravelWindowId] = useState(initialTravelWindows[0].id);
+  const [visibleCalendarMonth, setVisibleCalendarMonth] = useState({ year: 2026, monthIndex: 4 });
+  const [isAddingRange, setIsAddingRange] = useState(false);
   const [draftRange, setDraftRange] = useState<DraftRange | null>(null);
   const [draftAnchorDate, setDraftAnchorDate] = useState<string | null>(null);
   const [isDraftComplete, setIsDraftComplete] = useState(false);
@@ -160,7 +173,50 @@ export default function Page() {
   const activeGroup =
     groups.find((group) => group.travel_window.id === selectedTravelWindowId) ?? groups[0];
   const activeRecommendations = activeGroup?.recommendations ?? [];
+  const mapDestinations =
+    activeRecommendations.length > 0
+      ? activeRecommendations.slice(0, 5).map((item) => ({
+          city: item.destination.city,
+          country: item.destination.country,
+          score: item.score,
+          summary: item.reasons[0],
+        }))
+      : staticRecommendations.map((item) => ({
+          city: item.city,
+          country: item.country,
+          score: item.score,
+          summary: item.why,
+        }));
   const visibleCalendarRange = draftRange ?? selectedTravelWindow;
+  const visibleCalendarDates = buildCalendarDates(
+    visibleCalendarMonth.year,
+    visibleCalendarMonth.monthIndex,
+  );
+  const visibleCalendarTitle = formatCalendarTitle(
+    visibleCalendarMonth.year,
+    visibleCalendarMonth.monthIndex,
+  );
+  const todayIsoDate = toIsoDate(new Date());
+
+  function shiftVisibleMonth(offset: number) {
+    setVisibleCalendarMonth((currentMonth) => {
+      const nextMonth = new Date(
+        Date.UTC(currentMonth.year, currentMonth.monthIndex + offset, 1),
+      );
+      return {
+        year: nextMonth.getUTCFullYear(),
+        monthIndex: nextMonth.getUTCMonth(),
+      };
+    });
+  }
+
+  function showMonthForDate(isoDate: string) {
+    const date = new Date(`${isoDate}T00:00:00Z`);
+    setVisibleCalendarMonth({
+      year: date.getUTCFullYear(),
+      monthIndex: date.getUTCMonth(),
+    });
+  }
 
   async function handleFindDestinations() {
     setStatus("loading");
@@ -194,7 +250,11 @@ export default function Page() {
     }
   }
 
-  function handleMayDateClick(date: string) {
+  function handleCalendarDateClick(date: string) {
+    if (!isAddingRange) {
+      return;
+    }
+
     if (!draftAnchorDate || isDraftComplete) {
       setDraftAnchorDate(date);
       setDraftRange({ start_date: date, end_date: date });
@@ -206,8 +266,16 @@ export default function Page() {
     setIsDraftComplete(true);
   }
 
-  function handleAddRange() {
-    if (!draftRange) {
+  function handleRangeButtonClick() {
+    if (!isAddingRange) {
+      setIsAddingRange(true);
+      setDraftAnchorDate(null);
+      setDraftRange(null);
+      setIsDraftComplete(false);
+      return;
+    }
+
+    if (!draftRange || !isDraftComplete) {
       return;
     }
 
@@ -228,6 +296,7 @@ export default function Page() {
     setDraftAnchorDate(null);
     setDraftRange(null);
     setIsDraftComplete(false);
+    setIsAddingRange(false);
   }
 
   function handleStartRename(window: PlanningWindow) {
@@ -320,29 +389,53 @@ export default function Page() {
 
           <div className="card stack">
             <div className="row">
-              <strong>May 2026</strong>
+              <div className="month-controls">
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label="Previous month"
+                  onClick={() => shiftVisibleMonth(-1)}
+                >
+                  {"<"}
+                </button>
+                <strong>{visibleCalendarTitle}</strong>
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label="Next month"
+                  onClick={() => shiftVisibleMonth(1)}
+                >
+                  {">"}
+                </button>
+              </div>
               <span className="pill">GB holidays</span>
             </div>
-            <div className="calendar" aria-label="May 2026 calendar">
+            <div className="calendar" aria-label={`${visibleCalendarTitle} calendar`}>
               {["M", "T", "W", "T", "F", "S", "S"].map((day, index) => (
                 <div className="dow" key={`${day}-${index}`}>
                   {day}
                 </div>
               ))}
-              {mayCalendarDates.map(({ day, isoDate, label }, index) => {
-                const isHoliday = isoDate === "2026-05-04" || isoDate === "2026-05-25";
+              {visibleCalendarDates.map(({ day, isoDate, label, isCurrentMonth }, index) => {
+                const isHoliday = gbHolidayDates.has(isoDate);
                 const isSelected = isWithinRange(
                   isoDate,
                   visibleCalendarRange.start_date,
                   visibleCalendarRange.end_date,
                 );
+                const isToday = isoDate === todayIsoDate;
                 return (
                   <button
-                    className={`day${isHoliday ? " holiday" : ""}${isSelected ? " selected" : ""}`}
+                    className={`day${!isCurrentMonth ? " outside-month" : ""}${
+                      isHoliday ? " holiday" : ""
+                    }${isSelected ? " selected" : ""}${isToday ? " current-day" : ""}${
+                      isAddingRange ? " picking" : ""
+                    }`}
                     key={`${isoDate}-${index}`}
                     type="button"
                     aria-label={label}
-                    onClick={() => handleMayDateClick(isoDate)}
+                    aria-disabled={!isAddingRange}
+                    onClick={() => handleCalendarDateClick(isoDate)}
                   >
                     {day}
                   </button>
@@ -353,14 +446,21 @@ export default function Page() {
               <p className="muted">
                 Draft range: {formatWindowLabel(draftRange.start_date, draftRange.end_date)}
               </p>
+            ) : isAddingRange ? (
+              <p className="muted">Pick a start date, then an end date.</p>
             ) : null}
           </div>
 
           <div className="card stack">
             <div className="row">
               <strong>Candidate travel windows</strong>
-              <button className="secondary-button" type="button" onClick={handleAddRange}>
-                Add range
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={isAddingRange && !isDraftComplete}
+                onClick={handleRangeButtonClick}
+              >
+                {isAddingRange ? "Save range" : "Add range"}
               </button>
             </div>
             <span className="score">{travelWindows.length} ranges</span>
@@ -374,7 +474,14 @@ export default function Page() {
                       className={`range-button${isSelected ? " active" : ""}`}
                       type="button"
                       aria-label={`Select ${window.label}`}
-                      onClick={() => setSelectedTravelWindowId(window.id)}
+                      onClick={() => {
+                        setSelectedTravelWindowId(window.id);
+                        showMonthForDate(window.start_date);
+                        setIsAddingRange(false);
+                        setDraftAnchorDate(null);
+                        setDraftRange(null);
+                        setIsDraftComplete(false);
+                      }}
                     >
                       <span>
                         <strong>{window.dates}</strong>
@@ -447,37 +554,7 @@ export default function Page() {
           </div>
         </aside>
 
-        <section className="map" aria-label="Europe destination map">
-          <div className="route" />
-          <div className="pin pin-home">
-            {homeCity}
-            <span>home base</span>
-          </div>
-          {activeRecommendations.length > 0
-            ? activeRecommendations.slice(0, 5).map((item, index) => (
-                <button
-                  className={`pin ${pinClasses[index] ?? "pin-lisbon"}`}
-                  type="button"
-                  key={`${item.travel_window_id}-${item.destination.id}`}
-                >
-                  {item.destination.city} {item.score}
-                  <span>{item.reasons[0]}</span>
-                </button>
-              ))
-            : staticRecommendations.map((item, index) => (
-                <div className={`pin ${pinClasses[index]}`} key={item.city}>
-                  {item.city} {item.score}
-                  <span>May: {index === 0 ? "warm + food" : "destination fit"}</span>
-                </div>
-              ))}
-          <div className="map-note">
-            <strong>Map behavior</strong>
-            <p className="muted">
-              Clicking a date window will filter pins. Clicking a pin will open reasons and an
-              itinerary preview.
-            </p>
-          </div>
-        </section>
+        <DestinationMap destinations={mapDestinations} homeCity={homeCity} />
 
         <aside className="panel right-panel stack">
           <div>

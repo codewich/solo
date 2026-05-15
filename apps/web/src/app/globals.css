@@ -54,7 +54,7 @@ select {
 .workspace {
   display: grid;
   grid-template-columns: 360px minmax(420px, 1fr) 380px;
-  min-height: calc(100vh - 68px);
+  height: calc(100vh - 68px);
 }
 
 .panel {
@@ -188,6 +188,13 @@ select {
   background: #fffdf8;
   font-size: 12px;
   font-weight: 900;
+  white-space: nowrap;
+}
+
+.secondary-button:disabled {
+  color: #8b948e;
+  background: #f3f0e7;
+  cursor: not-allowed;
 }
 
 .danger-button {
@@ -208,6 +215,30 @@ select {
   border-radius: 6px;
   padding: 9px 11px;
   background: white;
+}
+
+.month-controls {
+  display: inline-grid;
+  grid-template-columns: 32px minmax(118px, 1fr) 32px;
+  align-items: center;
+  gap: 8px;
+}
+
+.month-controls strong {
+  text-align: center;
+}
+
+.icon-button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #cfc6b1;
+  border-radius: 6px;
+  color: #24342e;
+  background: #fffdf8;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 .calendar {
@@ -237,6 +268,23 @@ select {
   cursor: pointer;
 }
 
+.day[aria-disabled="true"] {
+  cursor: default;
+}
+
+.outside-month {
+  color: #9ba49e;
+  background: #fbf8ef;
+}
+
+.picking {
+  border-color: #cfc6b1;
+}
+
+.current-day {
+  box-shadow: inset 0 0 0 2px #17211d;
+}
+
 .holiday {
   border-color: #24745a;
   background: #e4f2eb;
@@ -253,76 +301,62 @@ select {
 
 .map {
   position: relative;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
-  background: radial-gradient(circle at 50% 45%, rgba(255, 255, 255, 0.68), transparent 28%),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.38) 1px, transparent 1px),
-    linear-gradient(rgba(255, 255, 255, 0.38) 1px, transparent 1px), #d7e7df;
-  background-size: auto, 44px 44px, 44px 44px;
+  background: #d7e7df;
 }
 
-.route {
-  position: absolute;
-  inset: 20% 18% 22% 16%;
-  border: 2px dashed rgba(36, 116, 90, 0.36);
-  border-radius: 48% 42% 52% 38%;
-  transform: rotate(-8deg);
+.real-map {
+  min-height: 0;
 }
 
-.pin {
+.map-canvas {
   position: absolute;
-  width: max-content;
-  max-width: 168px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.map-overlay-pins {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: min(620px, calc(100% - 32px));
+  pointer-events: none;
+}
+
+.maplibregl-marker {
+  z-index: 2;
+}
+
+.map-chip {
+  max-width: 180px;
   border: 1px solid rgba(12, 55, 42, 0.2);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 9px 11px;
   color: white;
   background: #24745a;
-  box-shadow: 0 16px 34px rgba(31, 59, 49, 0.22);
+  box-shadow: 0 12px 28px rgba(31, 59, 49, 0.24);
+  font-size: 13px;
   font-weight: 900;
 }
 
-.pin span {
+.map-chip-home {
+  background: #18221d;
+}
+
+.map-chip span {
   display: block;
   margin-top: 3px;
   font-size: 11px;
   font-weight: 600;
-  opacity: 0.9;
-}
-
-.pin-home {
-  left: 33%;
-  top: 34%;
-  background: #18221d;
-}
-
-.pin-lisbon {
-  left: 42%;
-  top: 61%;
-}
-
-.pin-seville {
-  left: 47%;
-  top: 72%;
-  background: #b65443;
-}
-
-.pin-porto {
-  left: 50%;
-  top: 55%;
-  background: #b7862b;
-}
-
-.map-note {
-  position: absolute;
-  left: 18px;
-  bottom: 18px;
-  width: 260px;
-  border: 1px solid rgba(24, 34, 29, 0.12);
-  border-radius: 8px;
-  padding: 12px;
-  background: rgba(255, 253, 248, 0.92);
-  box-shadow: 0 14px 34px rgba(31, 59, 49, 0.14);
+  line-height: 1.25;
+  opacity: 0.92;
 }
 
 .score {
@@ -353,6 +387,7 @@ select {
   }
 
   .workspace {
+    height: auto;
     grid-template-columns: 1fr;
   }
 
