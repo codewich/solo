@@ -38,6 +38,55 @@ Local ports:
 
 The API was moved to port `45655` because port `8000` hit a Windows socket permission error on this machine.
 
+## How To Start The App
+
+Use two terminals from `C:\Users\Michael\projects\solo`.
+
+Terminal 1, start the API:
+
+```bash
+corepack pnpm dev:api
+```
+
+Expected API URL:
+
+```text
+http://localhost:45655
+```
+
+Optional API health check:
+
+```bash
+Invoke-RestMethod http://localhost:45655/health
+```
+
+Terminal 2, start the web app:
+
+```bash
+corepack pnpm dev:web
+```
+
+Expected web URL:
+
+```text
+http://localhost:3000
+```
+
+Then open `http://localhost:3000` in the browser. The web app calls the API through `apps/web/src/lib/api.ts`, whose local fallback is `http://localhost:45655`.
+
+If dependencies have been removed or the app cannot find packages, rebuild Node workspace links first:
+
+```bash
+corepack pnpm install
+```
+
+If the API virtual environment has been removed, rebuild it first:
+
+```bash
+python -m venv apps/api/.venv
+apps/api/.venv/Scripts/python.exe -m pip install -e "apps/api[dev]"
+```
+
 ## Verification State
 
 The latest verification from `C:\Users\Michael\projects\solo`:
