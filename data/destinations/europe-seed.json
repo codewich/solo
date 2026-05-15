@@ -1,0 +1,102 @@
+[
+  {
+    "id": "lisbon-pt",
+    "city": "Lisbon",
+    "country": "Portugal",
+    "timezone": "Europe/Lisbon",
+    "latitude": 38.7223,
+    "longitude": -9.1393,
+    "cost_level": 3,
+    "short_stay_score": 5,
+    "solo_friendliness": 5,
+    "tags": ["food", "architecture", "warm", "nightlife", "history", "slow-wander", "popular"],
+    "seasonal_strengths": {
+      "spring": ["mild weather", "long daylight", "outdoor viewpoints"],
+      "summer": ["beach access", "late evenings"],
+      "autumn": ["warm shoulder season", "food"],
+      "winter": ["milder than northern Europe"]
+    },
+    "climate_notes": "Mild winters and warm summers; strong long-weekend fit outside peak heat.",
+    "caveats": ["Hilly neighborhoods can make packed days tiring."]
+  },
+  {
+    "id": "porto-pt",
+    "city": "Porto",
+    "country": "Portugal",
+    "timezone": "Europe/Lisbon",
+    "latitude": 41.1579,
+    "longitude": -8.6291,
+    "cost_level": 3,
+    "short_stay_score": 5,
+    "solo_friendliness": 4,
+    "tags": ["food", "architecture", "history", "slow-wander", "underrated"],
+    "seasonal_strengths": {
+      "spring": ["river walks", "wine cellars", "mild days"],
+      "summer": ["coastal day trips"],
+      "autumn": ["harvest atmosphere", "food"],
+      "winter": ["moody historic streets"]
+    },
+    "climate_notes": "Cooler and wetter than Lisbon, especially in winter.",
+    "caveats": ["Rain is common in late autumn and winter."]
+  },
+  {
+    "id": "prague-cz",
+    "city": "Prague",
+    "country": "Czechia",
+    "timezone": "Europe/Prague",
+    "latitude": 50.0755,
+    "longitude": 14.4378,
+    "cost_level": 3,
+    "short_stay_score": 5,
+    "solo_friendliness": 4,
+    "tags": ["history", "architecture", "museums", "nightlife", "popular"],
+    "seasonal_strengths": {
+      "spring": ["walkable old town", "parks", "beer gardens"],
+      "summer": ["long evenings", "riverfront"],
+      "autumn": ["cool walking weather"],
+      "winter": ["christmas-market", "atmospheric streets"]
+    },
+    "climate_notes": "Cold in winter, pleasant in spring and early autumn.",
+    "caveats": ["Central areas can feel crowded on peak weekends."]
+  },
+  {
+    "id": "copenhagen-dk",
+    "city": "Copenhagen",
+    "country": "Denmark",
+    "timezone": "Europe/Copenhagen",
+    "latitude": 55.6761,
+    "longitude": 12.5683,
+    "cost_level": 5,
+    "short_stay_score": 4,
+    "solo_friendliness": 5,
+    "tags": ["food", "design", "museums", "cycling", "architecture", "popular"],
+    "seasonal_strengths": {
+      "spring": ["design", "harbor walks"],
+      "summer": ["swimming spots", "long daylight", "cycling"],
+      "autumn": ["food", "museums"],
+      "winter": ["cosy cafes", "design shops"]
+    },
+    "climate_notes": "Best in late spring and summer; winter is cold and dark.",
+    "caveats": ["Expensive compared with southern Europe."]
+  },
+  {
+    "id": "seville-es",
+    "city": "Seville",
+    "country": "Spain",
+    "timezone": "Europe/Madrid",
+    "latitude": 37.3891,
+    "longitude": -5.9845,
+    "cost_level": 3,
+    "short_stay_score": 5,
+    "solo_friendliness": 4,
+    "tags": ["warm", "food", "history", "architecture", "slow-wander", "underrated"],
+    "seasonal_strengths": {
+      "spring": ["orange blossoms", "festivals", "ideal walking weather"],
+      "summer": ["late nights"],
+      "autumn": ["warm evenings", "food"],
+      "winter": ["mild city break"]
+    },
+    "climate_notes": "Excellent in spring and autumn; very hot in summer.",
+    "caveats": ["Summer afternoons can be too hot for rushed sightseeing."]
+  }
+]

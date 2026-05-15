@@ -1,0 +1,14 @@
+{
+  "name": "solo",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev:web": "corepack pnpm --filter @solo/web dev",
+    "dev:api": "cd apps/api && .venv\\Scripts\\python.exe -m uvicorn solo_api.main:app --host localhost --port 45655",
+    "test": "corepack pnpm test:web && corepack pnpm test:api",
+    "test:web": "corepack pnpm --filter @solo/web test -- --run",
+    "test:api": "cd apps/api && .venv\\Scripts\\python.exe -m pytest -o cache_dir=C:\\tmp\\solo-pytest-cache",
+    "lint:web": "corepack pnpm --filter @solo/web lint"
+  }
+}
