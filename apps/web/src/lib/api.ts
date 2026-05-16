@@ -8,6 +8,39 @@ import type {
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:45655";
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly detail?: unknown,
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
+async function responseError(response: Response, fallbackMessage: string): Promise<ApiRequestError> {
+  let detail: unknown;
+  try {
+    detail = await response.json();
+  } catch {
+    detail = undefined;
+  }
+
+  const detailMessage =
+    typeof detail === "object" &&
+    detail !== null &&
+    "detail" in detail &&
+    typeof detail.detail === "object" &&
+    detail.detail !== null &&
+    "message" in detail.detail &&
+    typeof detail.detail.message === "string"
+      ? detail.detail.message
+      : fallbackMessage;
+
+  return new ApiRequestError(detailMessage, response.status, detail);
+}
+
 export async function fetchRecommendations(
   request: RecommendationRequest,
 ): Promise<RecommendationGroup[]> {
@@ -18,7 +51,7 @@ export async function fetchRecommendations(
   });
 
   if (!response.ok) {
-    throw new Error(`Recommendation request failed with ${response.status}`);
+    throw await responseError(response, `Recommendation request failed with ${response.status}`);
   }
 
   return response.json();
@@ -30,7 +63,7 @@ export async function fetchCitySuggestions(query: string): Promise<CitySuggestio
   );
 
   if (!response.ok) {
-    throw new Error(`City suggestion request failed with ${response.status}`);
+    throw await responseError(response, `City suggestion request failed with ${response.status}`);
   }
 
   return response.json();
@@ -46,7 +79,10 @@ export async function fetchDestinationIntelligence(
   });
 
   if (!response.ok) {
-    throw new Error(`Destination intelligence request failed with ${response.status}`);
+    throw await responseError(
+      response,
+      `Destination intelligence request failed with ${response.status}`,
+    );
   }
 
   return response.json();

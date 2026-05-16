@@ -8,12 +8,14 @@ type MapDestination = {
   country: string;
   score: number;
   summary: string;
+  coordinates?: [number, number];
 };
 
 type DestinationMapProps = {
   destinations: MapDestination[];
   homeCity: string;
   homeCoordinates: [number, number];
+  radiusKm: number;
   showDestinationPins: boolean;
 };
 
@@ -41,14 +43,6 @@ export function buildDefaultMapStyle() {
   return defaultMapStyle;
 }
 
-const cityCoordinates: Record<string, [number, number]> = {
-  Copenhagen: [12.5683, 55.6761],
-  Lisbon: [-9.1393, 38.7223],
-  London: [-0.1276, 51.5072],
-  Porto: [-8.6291, 41.1579],
-  Seville: [-5.9845, 37.3891],
-};
-
 function createCityMarkerElement(city: string, variant: "home" | "destination"): HTMLDivElement {
   const marker = document.createElement("div");
   marker.className = `city-marker city-marker-${variant}`;
@@ -66,10 +60,35 @@ function createCityMarkerElement(city: string, variant: "home" | "destination"):
   return marker;
 }
 
+function circleFeature(center: [number, number], radiusKm: number) {
+  const points = 96;
+  const earthRadiusKm = 6371;
+  const [longitude, latitude] = center;
+  const latitudeRadians = (latitude * Math.PI) / 180;
+  const coordinates = Array.from({ length: points + 1 }, (_, index) => {
+    const angle = (index / points) * Math.PI * 2;
+    const latitudeOffset = (radiusKm / earthRadiusKm) * (180 / Math.PI) * Math.sin(angle);
+    const longitudeOffset =
+      ((radiusKm / earthRadiusKm) * (180 / Math.PI) * Math.cos(angle)) /
+      Math.cos(latitudeRadians);
+    return [longitude + longitudeOffset, latitude + latitudeOffset];
+  });
+
+  return {
+    type: "Feature" as const,
+    properties: {},
+    geometry: {
+      type: "Polygon" as const,
+      coordinates: [coordinates],
+    },
+  };
+}
+
 export function DestinationMap({
   destinations,
   homeCity,
   homeCoordinates,
+  radiusKm,
   showDestinationPins,
 }: DestinationMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -81,10 +100,6 @@ export function DestinationMap({
   const visibleDestinations = useMemo(
     () =>
       destinations
-        .map((destination) => ({
-          ...destination,
-          coordinates: cityCoordinates[destination.city],
-        }))
         .filter(
           (destination): destination is MapDestination & { coordinates: [number, number] } =>
             Boolean(destination.coordinates),
@@ -167,6 +182,37 @@ export function DestinationMap({
         .addTo(map);
       markerRefs.current.push(homeMarker);
 
+      if (!map.getSource("search-radius")) {
+        map.addSource("search-radius", {
+          type: "geojson",
+          data: circleFeature(homeCoordinates, radiusKm),
+        });
+        map.addLayer({
+          id: "search-radius-fill",
+          type: "fill",
+          source: "search-radius",
+          paint: {
+            "fill-color": "#24745a",
+            "fill-opacity": 0.12,
+          },
+        });
+        map.addLayer({
+          id: "search-radius-line",
+          type: "line",
+          source: "search-radius",
+          paint: {
+            "line-color": "#24745a",
+            "line-opacity": 0.48,
+            "line-width": 2,
+          },
+        });
+      } else {
+        const source = map.getSource("search-radius") as
+          | { setData: (data: ReturnType<typeof circleFeature>) => void }
+          | undefined;
+        source?.setData(circleFeature(homeCoordinates, radiusKm));
+      }
+
       if (showDestinationPins) {
         visibleDestinations.forEach((destination) => {
           const marker = new maplibregl.Marker({
@@ -189,13 +235,16 @@ export function DestinationMap({
     return () => {
       isMounted = false;
     };
-  }, [homeCity, homeCoordinates, isMapReady, showDestinationPins, visibleDestinations]);
+  }, [homeCity, homeCoordinates, isMapReady, radiusKm, showDestinationPins, visibleDestinations]);
 
   return (
     <section className="map real-map" aria-label="Europe destination map">
       <div className="map-canvas" data-testid="maplibre-map" ref={containerRef} />
       <div className="map-overlay-pins" aria-label="Visible destination markers">
         <div className="map-chip map-chip-home">{homeCity} home base</div>
+        <div className="map-chip map-chip-radius" aria-label={`Search radius ${radiusKm} km`}>
+          {radiusKm} km radius
+        </div>
         {showDestinationPins
           ? visibleDestinations.map((destination) => (
               <div

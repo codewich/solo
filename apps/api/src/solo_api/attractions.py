@@ -5,6 +5,14 @@ from solo_api.models import AttractionSummary
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 WIKIMEDIA_SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
+ATTRACTION_TIMEOUT = httpx.Timeout(12.0, connect=4.0)
+
+
+class AttractionLookupError(Exception):
+    def __init__(self, *, service: str, message: str, original_error: Exception):
+        self.service = service
+        self.original_error = original_error
+        super().__init__(message)
 
 
 def _category(tags: dict) -> str:
@@ -30,30 +38,100 @@ def fetch_wikimedia_summary(city: str) -> str | None:
     return extract if isinstance(extract, str) and extract else None
 
 
+def _overpass_query(
+    *,
+    latitude: float,
+    longitude: float,
+    radius_m: int,
+    include_historic: bool,
+) -> str:
+    historic_queries = (
+        f"""
+      node(around:{radius_m},{latitude},{longitude})["historic"~"castle|monument|archaeological_site"]["name"];
+      way(around:{radius_m},{latitude},{longitude})["historic"~"castle|monument|archaeological_site"]["name"];"""
+        if include_historic
+        else ""
+    )
+    return f"""
+    [out:json][timeout:12];
+    (
+      node(around:{radius_m},{latitude},{longitude})["tourism"~"museum|attraction|viewpoint|gallery"]["name"];
+      way(around:{radius_m},{latitude},{longitude})["tourism"~"museum|attraction|viewpoint|gallery"]["name"];{historic_queries}
+    );
+    out center tags qt 12;
+    """
+
+
+def _post_overpass_query(query: str) -> httpx.Response:
+    return httpx.post(
+        OVERPASS_URL,
+        data={"data": query},
+        headers={"User-Agent": USER_AGENT},
+        timeout=ATTRACTION_TIMEOUT,
+    )
+
+
 def fetch_attractions(
     latitude: float,
     longitude: float,
     city: str | None = None,
     radius_m: int = 6000,
 ) -> list[AttractionSummary]:
-    query = f"""
-    [out:json][timeout:20];
-    (
-      node(around:{radius_m},{latitude},{longitude})["tourism"~"museum|attraction|viewpoint|gallery"];
-      node(around:{radius_m},{latitude},{longitude})["historic"];
-      node(around:{radius_m},{latitude},{longitude})["amenity"="place_of_worship"];
-      way(around:{radius_m},{latitude},{longitude})["tourism"~"museum|attraction|viewpoint|gallery"];
-      way(around:{radius_m},{latitude},{longitude})["historic"];
-    );
-    out center tags 20;
-    """
-    response = httpx.post(
-        OVERPASS_URL,
-        data={"data": query},
-        headers={"User-Agent": USER_AGENT},
-        timeout=DEFAULT_TIMEOUT,
+    query = _overpass_query(
+        latitude=latitude,
+        longitude=longitude,
+        radius_m=radius_m,
+        include_historic=True,
     )
-    response.raise_for_status()
+    try:
+        response = _post_overpass_query(query)
+        response.raise_for_status()
+    except httpx.TimeoutException:
+        try:
+            response = _post_overpass_query(
+                _overpass_query(
+                    latitude=latitude,
+                    longitude=longitude,
+                    radius_m=radius_m,
+                    include_historic=False,
+                )
+            )
+            response.raise_for_status()
+        except httpx.TimeoutException as retry_error:
+            raise AttractionLookupError(
+                service="OpenStreetMap",
+                message="OpenStreetMap timed out while querying nearby attractions.",
+                original_error=retry_error,
+            ) from retry_error
+        except httpx.HTTPStatusError as retry_error:
+            status_code = retry_error.response.status_code
+            raise AttractionLookupError(
+                service="OpenStreetMap",
+                message=(
+                    f"OpenStreetMap returned HTTP {status_code} "
+                    "while querying nearby attractions."
+                ),
+                original_error=retry_error,
+            ) from retry_error
+        except httpx.HTTPError as retry_error:
+            raise AttractionLookupError(
+                service="OpenStreetMap",
+                message="OpenStreetMap failed while querying nearby attractions.",
+                original_error=retry_error,
+            ) from retry_error
+    except httpx.HTTPStatusError as error:
+        status_code = error.response.status_code
+        raise AttractionLookupError(
+            service="OpenStreetMap",
+            message=f"OpenStreetMap returned HTTP {status_code} while querying nearby attractions.",
+            original_error=error,
+        ) from error
+    except httpx.HTTPError as error:
+        raise AttractionLookupError(
+            service="OpenStreetMap",
+            message="OpenStreetMap failed while querying nearby attractions.",
+            original_error=error,
+        ) from error
 
     destination_summary = fetch_wikimedia_summary(city) if city else None
     attractions: list[AttractionSummary] = []

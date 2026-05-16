@@ -1,7 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from solo_api.destination_intelligence import build_destination_intelligence
+from solo_api.destination_intelligence import (
+    DestinationIntelligenceStepError,
+    build_destination_intelligence,
+)
 from solo_api.geocoding import search_cities
 from solo_api.holidays import get_bank_holidays
 from solo_api.itineraries import ItineraryRequest, build_itinerary
@@ -52,15 +55,38 @@ def recommended_destinations(
     budget: int | None = None,
     region: str | None = None,
     q: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    radiusKm: int = 1800,
+    minPopulation: int = 250000,
 ) -> list[RecommendedDestination]:
-    return recommended_destinations_search(month=month, budget=budget, region=region, query=q)
+    return recommended_destinations_search(
+        month=month,
+        budget=budget,
+        region=region,
+        query=q,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radiusKm,
+        min_population=minPopulation,
+    )
 
 
 @app.post("/destination-intelligence")
 def destination_intelligence(
     request: DestinationIntelligenceRequest,
 ) -> DestinationIntelligence:
-    return build_destination_intelligence(request)
+    try:
+        return build_destination_intelligence(request)
+    except DestinationIntelligenceStepError as error:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "step": error.step,
+                "service": error.service,
+                "message": error.message,
+            },
+        ) from error
 
 
 @app.post("/itineraries")

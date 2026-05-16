@@ -11,9 +11,23 @@ from solo_api.models import (
     RecommendationRequest,
     TravelWindow,
 )
-from solo_api.destinations import load_destinations
 from solo_api.recommendations import recommend_destinations
 from solo_api.recommendation_signals import SIGNAL_CACHE, get_destination_signals
+
+
+def city(id: str = "lisbon-pt", name: str = "Lisbon"):
+    from solo_api.models import Destination
+
+    return Destination(
+        id=id,
+        city=name,
+        country="Portugal",
+        country_code="PT",
+        latitude=38.7223,
+        longitude=-9.1393,
+        population=544851,
+        timezone="Europe/Lisbon",
+    )
 
 
 def stub_live_signals(monkeypatch):
@@ -44,8 +58,20 @@ def stub_live_signals(monkeypatch):
     monkeypatch.setattr("solo_api.recommendations.get_destination_signals", fake_signals)
 
 
+def stub_city_candidates(monkeypatch):
+    monkeypatch.setattr(
+        "solo_api.recommendations.search_city_candidates",
+        lambda **kwargs: [
+            city("lisbon-pt", "Lisbon"),
+            city("porto-pt", "Porto"),
+            city("prague-cz", "Prague"),
+        ],
+    )
+
+
 def test_recommendations_are_grouped_by_travel_window(monkeypatch):
     stub_live_signals(monkeypatch)
+    stub_city_candidates(monkeypatch)
     request = RecommendationRequest(
         home_city="London",
         travel_windows=[
@@ -63,6 +89,7 @@ def test_recommendations_are_grouped_by_travel_window(monkeypatch):
 
 def test_recommendations_respect_exclusions(monkeypatch):
     stub_live_signals(monkeypatch)
+    stub_city_candidates(monkeypatch)
     request = RecommendationRequest(
         home_city="London",
         travel_windows=[
@@ -80,6 +107,7 @@ def test_recommendations_respect_exclusions(monkeypatch):
 
 def test_recommendations_endpoint_returns_groups(monkeypatch):
     stub_live_signals(monkeypatch)
+    stub_city_candidates(monkeypatch)
     client = TestClient(app)
 
     response = client.post(
@@ -126,6 +154,7 @@ def test_recommendations_include_live_score_breakdown(monkeypatch):
         }
 
     monkeypatch.setattr("solo_api.recommendations.get_destination_signals", fake_signals)
+    stub_city_candidates(monkeypatch)
     request = RecommendationRequest(
         home_city="London",
         travel_windows=[
@@ -173,7 +202,7 @@ def test_destination_signals_are_cached(monkeypatch):
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", fake_attractions)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", fake_summary)
 
-    destination = load_destinations()[0]
+    destination = city()
     window = TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25))
 
     first = get_destination_signals(destination, window)
@@ -193,7 +222,7 @@ def test_destination_signals_fall_back_with_warning(monkeypatch):
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", lambda **kwargs: [])
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
 
-    destination = load_destinations()[0]
+    destination = city()
     signals = get_destination_signals(
         destination,
         TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25)),
@@ -229,9 +258,12 @@ def test_recommended_destinations_endpoint_returns_direct_search_shape(monkeypat
         }
 
     monkeypatch.setattr("solo_api.recommendations.get_destination_signals", fake_signals)
+    stub_city_candidates(monkeypatch)
     client = TestClient(app)
 
-    response = client.get("/api/destinations/recommended?month=5&budget=4&region=Portugal&q=lis")
+    response = client.get(
+        "/api/destinations/recommended?month=5&budget=4&region=PT&q=lis&radiusKm=1200&minPopulation=300000"
+    )
 
     assert response.status_code == 200
     body = response.json()
@@ -240,3 +272,41 @@ def test_recommended_destinations_endpoint_returns_direct_search_shape(monkeypat
     assert body[0]["coordinates"] == {"lat": 38.7223, "lng": -9.1393}
     assert body[0]["travelScore"] == sum(body[0]["scoreBreakdown"].values())
     assert body[0]["topAttractions"] == ["Central Museum"]
+
+
+def test_recommendations_query_city_candidates_with_radius_and_population(monkeypatch):
+    stub_live_signals(monkeypatch)
+    calls = []
+
+    def fake_search_city_candidates(**kwargs):
+        calls.append(kwargs)
+        return [city()]
+
+    monkeypatch.setattr("solo_api.recommendations.search_city_candidates", fake_search_city_candidates)
+    request = RecommendationRequest(
+        home_city="London",
+        center_latitude=51.5072,
+        center_longitude=-0.1276,
+        radius_km=900,
+        min_population=500000,
+        candidate_limit=7,
+        region="PT",
+        q="Lis",
+        travel_windows=[
+            TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25))
+        ],
+    )
+
+    recommend_destinations(request)
+
+    assert calls == [
+        {
+            "latitude": 51.5072,
+            "longitude": -0.1276,
+            "radius_km": 900,
+            "min_population": 500000,
+            "limit": 7,
+            "region": "PT",
+            "query": "Lis",
+        }
+    ]

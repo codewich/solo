@@ -477,14 +477,14 @@ select {
 }
 
 .city-marker {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  transform: translateY(-8px);
+  position: relative;
+  width: 13px;
+  height: 13px;
   pointer-events: auto;
 }
 
 .city-marker-dot {
+  display: block;
   width: 13px;
   height: 13px;
   border: 2px solid #ffffff;
@@ -498,6 +498,10 @@ select {
 }
 
 .city-marker-label {
+  position: absolute;
+  left: 19px;
+  top: 50%;
+  transform: translateY(-50%);
   border: 1px solid rgba(12, 55, 42, 0.2);
   border-radius: 999px;
   padding: 4px 8px;
@@ -527,6 +531,11 @@ select {
   color: var(--on-home-pin);
 }
 
+.map-chip-radius {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
 .map-chip.is-hidden {
   display: none;
 }
@@ -548,6 +557,48 @@ select {
   border-top: 1px solid #ece4d2;
 }
 
+.destination-intelligence-loading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #ece4d2;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 760ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.notice {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.notice.warning {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+}
+
 .pagination-controls {
   display: flex;
   align-items: center;
@@ -558,6 +609,38 @@ select {
 .score {
   color: var(--accent);
   font-weight: 900;
+}
+
+.score-tooltip {
+  position: relative;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: transparent;
+  cursor: help;
+}
+
+.score-tooltip-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 4;
+  min-width: 190px;
+  display: none;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--text);
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+  font-size: 0.78rem;
+  text-align: left;
+}
+
+.score-tooltip:hover .score-tooltip-panel,
+.score-tooltip:focus-visible .score-tooltip-panel {
+  display: grid;
 }
 
 @media (max-width: 1180px) {

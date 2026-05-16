@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Any
 
-from solo_api.destinations import load_destinations
+from solo_api.city_candidates import search_city_candidates
 from solo_api.models import (
     AttractionSummary,
     ClimateSummary,
@@ -17,15 +17,8 @@ from solo_api.models import (
 )
 from solo_api.recommendation_signals import DestinationSignals, get_destination_signals
 
-
-def season_for_month(month: int) -> str:
-    if month in {3, 4, 5}:
-        return "spring"
-    if month in {6, 7, 8}:
-        return "summer"
-    if month in {9, 10, 11}:
-        return "autumn"
-    return "winter"
+DEFAULT_CENTER_LATITUDE = 51.5072
+DEFAULT_CENTER_LONGITUDE = -0.1276
 
 
 def _signals_from_value(value: DestinationSignals | dict[str, Any]) -> DestinationSignals:
@@ -65,8 +58,7 @@ def _climate_score(climate: ClimateSummary) -> int:
 def _attraction_score(attractions: list[AttractionSummary], destination: Destination) -> int:
     score = min(25, len(attractions) * 4)
     if not attractions:
-        seed_matches = {"history", "museums", "architecture", "nature"}.intersection(destination.tags)
-        score = min(14, len(seed_matches) * 4)
+        score = 6
     return score
 
 
@@ -74,15 +66,18 @@ def _popularity_score(summary: str | None, destination: Destination) -> int:
     score = 0
     if summary:
         score += min(15, max(5, len(summary) // 80))
-    if "popular" in destination.tags:
-        score += 5
-    if "underrated" in destination.tags:
-        score += 2
+    if destination.population is not None:
+        if destination.population >= 1_000_000:
+            score += 5
+        elif destination.population >= 500_000:
+            score += 3
+        elif destination.population >= 250_000:
+            score += 1
     return min(20, score)
 
 
 def _affordability_score(cost: CostOfLivingSummary, destination: Destination) -> int:
-    score = max(0, 22 - destination.cost_level * 4)
+    score = 10
     if cost.meal_inexpensive is not None:
         if cost.meal_inexpensive <= 12:
             score += 4
@@ -94,20 +89,11 @@ def _affordability_score(cost: CostOfLivingSummary, destination: Destination) ->
 def _estimated_daily_budget(cost: CostOfLivingSummary, destination: Destination) -> float | None:
     if cost.meal_inexpensive is not None and cost.coffee is not None and cost.local_transport_ticket is not None:
         return round(cost.meal_inexpensive * 2 + cost.coffee * 2 + cost.local_transport_ticket * 2, 2)
-    return float(destination.cost_level * 35)
+    return None
 
 
 def _best_months_to_visit(destination: Destination) -> list[str]:
-    month_names = {
-        "spring": ["March", "April", "May"],
-        "summer": ["June", "July", "August"],
-        "autumn": ["September", "October", "November"],
-        "winter": ["December", "January", "February"],
-    }
-    months: list[str] = []
-    for season in destination.seasonal_strengths:
-        months.extend(month_names.get(season, []))
-    return months[:6]
+    return []
 
 
 def score_destination(
@@ -125,14 +111,6 @@ def score_destination(
             climate_score = min(35, climate_score + 3)
         elif signals.climate.average_temperature_c < 12:
             climate_score = max(0, climate_score - 3)
-
-    if request.preferences.popularity == "underrated" and "popular" in destination.tags:
-        popularity_score = max(0, popularity_score - 4)
-    if request.preferences.popularity == "popular" and "popular" in destination.tags:
-        popularity_score = min(20, popularity_score + 3)
-
-    if request.preferences.budget_sensitivity >= 4:
-        affordability_score = min(20, affordability_score + max(0, 5 - destination.cost_level))
 
     breakdown = RecommendationScoreBreakdown(
         climate_score=climate_score,
@@ -163,16 +141,13 @@ def _recommendation_for(
     request: RecommendationRequest,
 ) -> Recommendation:
     score, breakdown, reasons, warnings, signals = score_destination(destination, window, request)
-    live_caveats = [*destination.caveats]
-    if warnings:
-        live_caveats.append(" ".join(warnings))
 
     return Recommendation(
         travel_window_id=window.id,
         destination=destination,
         score=score,
         reasons=reasons,
-        caveats=live_caveats,
+        caveats=[" ".join(warnings)] if warnings else [],
         score_breakdown=breakdown,
         best_months_to_visit=_best_months_to_visit(destination),
         top_attractions=[attraction.name for attraction in signals.attractions[:5]],
@@ -182,27 +157,25 @@ def _recommendation_for(
     )
 
 
-def _filtered_candidates(request: RecommendationRequest, region: str | None = None, query: str | None = None) -> list[Destination]:
+def _filtered_candidates(
+    request: RecommendationRequest,
+    region: str | None = None,
+    query: str | None = None,
+) -> list[Destination]:
     excluded = set(request.excluded_destination_ids)
-    candidates = [destination for destination in load_destinations() if destination.id not in excluded]
-
-    if region:
-        region_lower = region.lower()
-        candidates = [
-            destination
-            for destination in candidates
-            if region_lower in destination.country.lower() or region_lower in destination.timezone.lower()
-        ]
-
-    if query:
-        query_lower = query.lower()
-        candidates = [
-            destination
-            for destination in candidates
-            if query_lower in destination.city.lower() or query_lower in destination.country.lower()
-        ]
-
-    return candidates
+    return [
+        destination
+        for destination in search_city_candidates(
+            latitude=request.center_latitude or DEFAULT_CENTER_LATITUDE,
+            longitude=request.center_longitude or DEFAULT_CENTER_LONGITUDE,
+            radius_km=request.radius_km,
+            min_population=request.min_population,
+            limit=request.candidate_limit,
+            region=region or request.region,
+            query=query or request.q,
+        )
+        if destination.id not in excluded
+    ]
 
 
 def recommend_destinations(request: RecommendationRequest) -> list[RecommendationGroup]:
@@ -222,6 +195,10 @@ def recommended_destinations_search(
     budget: int | None = None,
     region: str | None = None,
     query: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    radius_km: int = 1800,
+    min_population: int = 250000,
 ) -> list[RecommendedDestination]:
     target_month = month or date.today().month
     window = TravelWindow(
@@ -231,6 +208,10 @@ def recommended_destinations_search(
     )
     request = RecommendationRequest(
         home_city="London",
+        center_latitude=latitude or DEFAULT_CENTER_LATITUDE,
+        center_longitude=longitude or DEFAULT_CENTER_LONGITUDE,
+        radius_km=radius_km,
+        min_population=min_population,
         travel_windows=[window],
         preferences={"budget_sensitivity": budget or 3},
     )

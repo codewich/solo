@@ -3,7 +3,7 @@ from datetime import date
 import httpx
 from fastapi.testclient import TestClient
 
-from solo_api.attractions import fetch_attractions
+from solo_api.attractions import AttractionLookupError, fetch_attractions
 from solo_api.cache import TtlCache
 from solo_api.cost_of_living import StaticCostOfLivingProvider
 from solo_api.hotels import summarize_hotel_prices
@@ -165,6 +165,27 @@ def test_fetch_attractions_combines_overpass_and_wikimedia_results(monkeypatch):
     )
 
 
+def test_fetch_attractions_uses_narrow_named_poi_query(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, data: dict, headers: dict, timeout):
+        captured["query"] = data["data"]
+        captured["timeout"] = timeout
+        return FakeResponse({"elements": []})
+
+    monkeypatch.setattr("solo_api.attractions.httpx.post", fake_post)
+    monkeypatch.setattr("solo_api.attractions.httpx.get", lambda *args, **kwargs: FakeResponse({}))
+
+    fetch_attractions(latitude=51.5072, longitude=-0.1276, city="London")
+
+    query = str(captured["query"])
+    assert '["tourism"~"museum|attraction|viewpoint|gallery"]["name"]' in query
+    assert '["historic"~"castle|monument|archaeological_site"]["name"]' in query
+    assert '["amenity"="place_of_worship"]' not in query
+    assert '["historic"];' not in query
+    assert captured["timeout"].read == 12.0
+
+
 def test_fetch_attractions_keeps_pois_when_wikimedia_summary_is_forbidden(monkeypatch):
     def fake_post(url: str, data: dict, headers: dict, timeout):
         return FakeResponse(
@@ -262,6 +283,200 @@ def test_destination_intelligence_endpoint_aggregates_sources(monkeypatch):
     assert payload["attractions"][0]["name"] == "Belem Tower"
     assert payload["hotels"]["median_nightly_price"] == 118.0
     assert payload["cost_of_living"]["currency"] == "EUR"
+
+
+def test_destination_intelligence_endpoint_reports_failing_service(monkeypatch):
+    from solo_api.destination_intelligence import INTELLIGENCE_CACHE
+
+    INTELLIGENCE_CACHE._values.clear()
+
+    def broken_climate(**kwargs):
+        raise httpx.TimeoutException("timed out while contacting Open-Meteo")
+
+    monkeypatch.setattr("solo_api.destination_intelligence.fetch_climate_summary", broken_climate)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/destination-intelligence",
+        json={
+            "destination_city": "Lisbon",
+            "country": "Portugal",
+            "latitude": 38.7223,
+            "longitude": -9.1393,
+            "start_date": "2026-05-22",
+            "end_date": "2026-05-25",
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == {
+        "step": "climate",
+        "service": "Open-Meteo",
+        "message": "Open-Meteo failed during climate lookup: timed out while contacting Open-Meteo",
+    }
+
+
+def test_destination_intelligence_keeps_partial_result_when_attractions_timeout(monkeypatch):
+    from solo_api.destination_intelligence import INTELLIGENCE_CACHE
+
+    INTELLIGENCE_CACHE._values.clear()
+
+    monkeypatch.setattr(
+        "solo_api.destination_intelligence.fetch_climate_summary",
+        lambda **kwargs: ClimateSummary(
+            average_temperature_c=20.0,
+            precipitation_mm=3.0,
+            sunshine_hours=7.0,
+            summary="Mild weather.",
+        ),
+    )
+
+    def broken_attractions(**kwargs):
+        raise AttractionLookupError(
+            service="OpenStreetMap",
+            message="OpenStreetMap timed out while querying nearby attractions.",
+            original_error=httpx.ReadTimeout("The read operation timed out"),
+        )
+
+    monkeypatch.setattr("solo_api.destination_intelligence.fetch_attractions", broken_attractions)
+    monkeypatch.setattr(
+        "solo_api.destination_intelligence.summarize_hotel_prices",
+        lambda **kwargs: HotelPriceSummary(
+            average_nightly_price=None,
+            median_nightly_price=None,
+            currency=None,
+            sample_size=0,
+            status="unavailable",
+        ),
+    )
+
+    response = TestClient(app).post(
+        "/destination-intelligence",
+        json={
+            "destination_city": "Metropolitan City of Milan",
+            "country": "Italy",
+            "latitude": 45.4642,
+            "longitude": 9.19,
+            "start_date": "2026-05-22",
+            "end_date": "2026-05-25",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["climate"]["average_temperature_c"] == 20.0
+    assert payload["attractions"] == []
+    assert payload["warnings"] == [
+        {
+            "step": "attractions",
+            "service": "OpenStreetMap",
+            "message": (
+                "OpenStreetMap failed during attractions lookup: "
+                "OpenStreetMap timed out while querying nearby attractions."
+            ),
+        }
+    ]
+
+
+def test_fetch_attractions_reports_openstreetmap_timeout_specifically(monkeypatch):
+    def broken_post(url: str, data: dict, headers: dict, timeout):
+        raise httpx.ReadTimeout("The read operation timed out")
+
+    monkeypatch.setattr("solo_api.attractions.httpx.post", broken_post)
+
+    try:
+        fetch_attractions(latitude=40.8518, longitude=14.2681, city="Metropolitan City of Naples")
+    except AttractionLookupError as error:
+        assert error.service == "OpenStreetMap"
+        assert str(error) == "OpenStreetMap timed out while querying nearby attractions."
+    else:
+        raise AssertionError("Expected an OpenStreetMap-specific attraction lookup error")
+
+
+def test_fetch_attractions_retries_with_lighter_query_after_timeout(monkeypatch):
+    calls: list[str] = []
+
+    def fake_post(url: str, data: dict, headers: dict, timeout):
+        calls.append(data["data"])
+        if len(calls) == 1:
+            raise httpx.ReadTimeout("The read operation timed out")
+        return FakeResponse(
+            {
+                "elements": [
+                    {
+                        "id": 1,
+                        "lat": 51.5138,
+                        "lon": -0.0995,
+                        "tags": {"name": "Museum of London", "tourism": "museum"},
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("solo_api.attractions.httpx.post", fake_post)
+    monkeypatch.setattr("solo_api.attractions.httpx.get", lambda *args, **kwargs: FakeResponse({}))
+
+    attractions = fetch_attractions(latitude=51.5072, longitude=-0.1276, city="London")
+
+    assert [item.name for item in attractions] == ["Museum of London"]
+    assert len(calls) == 2
+    assert '["historic"~"castle|monument|archaeological_site"]["name"]' in calls[0]
+    assert "historic" not in calls[1]
+
+
+def test_destination_intelligence_does_not_cache_partial_warning_results(monkeypatch):
+    from solo_api.destination_intelligence import INTELLIGENCE_CACHE
+
+    INTELLIGENCE_CACHE._values.clear()
+    calls = {"attractions": 0}
+
+    monkeypatch.setattr(
+        "solo_api.destination_intelligence.fetch_climate_summary",
+        lambda **kwargs: ClimateSummary(
+            average_temperature_c=18.0,
+            precipitation_mm=4.0,
+            sunshine_hours=6.0,
+            summary="Mild weather.",
+        ),
+    )
+    monkeypatch.setattr(
+        "solo_api.destination_intelligence.summarize_hotel_prices",
+        lambda **kwargs: HotelPriceSummary(
+            average_nightly_price=None,
+            median_nightly_price=None,
+            currency=None,
+            sample_size=0,
+            status="unavailable",
+        ),
+    )
+
+    def flaky_attractions(**kwargs):
+        calls["attractions"] += 1
+        if calls["attractions"] == 1:
+            raise AttractionLookupError(
+                service="OpenStreetMap",
+                message="OpenStreetMap timed out while querying nearby attractions.",
+                original_error=httpx.ReadTimeout("The read operation timed out"),
+            )
+        return [AttractionSummary(name="Museum of London", category="museum", source="OpenStreetMap")]
+
+    monkeypatch.setattr("solo_api.destination_intelligence.fetch_attractions", flaky_attractions)
+
+    body = {
+        "destination_city": "London",
+        "country": "United Kingdom",
+        "latitude": 51.5072,
+        "longitude": -0.1276,
+        "start_date": "2026-05-22",
+        "end_date": "2026-05-25",
+    }
+    first = TestClient(app).post("/destination-intelligence", json=body).json()
+    second = TestClient(app).post("/destination-intelligence", json=body).json()
+
+    assert first["warnings"]
+    assert second["warnings"] == []
+    assert second["attractions"][0]["name"] == "Museum of London"
+    assert calls["attractions"] == 2
 
 
 def test_destination_intelligence_uses_cache(monkeypatch):

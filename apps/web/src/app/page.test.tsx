@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import Page from "./page";
 
 describe("Solo homepage", () => {
@@ -18,11 +18,17 @@ describe("Solo homepage", () => {
                     id: "lisbon-pt",
                     city: "Lisbon",
                     country: "Portugal",
-                    tags: [],
-                    climate_notes: "",
-                    caveats: [],
+                    latitude: 38.7223,
+                    longitude: -9.1393,
+                    population: 544851,
                   },
                   score: 91,
+                  score_breakdown: {
+                    climateScore: 35,
+                    attractionScore: 25,
+                    popularityScore: 19,
+                    affordabilityScore: 12,
+                  },
                   reasons: ["Matches your preference for warmer destinations."],
                   caveats: [],
                 },
@@ -41,11 +47,17 @@ describe("Solo homepage", () => {
                     id: "copenhagen-dk",
                     city: "Copenhagen",
                     country: "Denmark",
-                    tags: [],
-                    climate_notes: "",
-                    caveats: [],
+                    latitude: 55.6761,
+                    longitude: 12.5683,
+                    population: 660842,
                   },
                   score: 86,
+                  score_breakdown: {
+                    climateScore: 30,
+                    attractionScore: 25,
+                    popularityScore: 20,
+                    affordabilityScore: 11,
+                  },
                   reasons: ["Long daylight fits this summer window."],
                   caveats: [],
                 },
@@ -72,6 +84,7 @@ describe("Solo homepage", () => {
     expect(screen.getByText("Candidate travel windows")).toBeInTheDocument();
     expect(screen.getByLabelText("Europe destination map")).toBeInTheDocument();
     expect(screen.getByTestId("maplibre-map")).toBeInTheDocument();
+    expect(screen.getByLabelText("Search radius 1800 km")).toBeInTheDocument();
   });
 
   it("starts without active date-range recommendations", () => {
@@ -80,6 +93,15 @@ describe("Solo homepage", () => {
     expect(screen.getByText("Select a date range to find matches.")).toBeInTheDocument();
     expect(screen.queryByText("Lisbon, Portugal")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Lisbon city marker")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Find destinations" })).toBeDisabled();
+  });
+
+  it("enables destination search after selecting a saved range", () => {
+    render(<Page />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+
+    expect(screen.getByRole("button", { name: "Find destinations" })).toBeEnabled();
   });
 
   it("loads recommendations from the API into the map workspace", async () => {
@@ -93,6 +115,43 @@ describe("Solo homepage", () => {
     });
     expect(screen.getByText("Lisbon 91")).toBeInTheDocument();
     expect(screen.getByLabelText("Lisbon city marker")).toBeInTheDocument();
+    expect(screen.getByLabelText("Score breakdown for Lisbon")).toHaveTextContent("Climate: 35");
+  });
+
+  it("sends radius and population filters with recommendation requests", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => [
+        {
+          travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
+          recommendations: [],
+        },
+      ],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+
+    fireEvent.change(screen.getByLabelText("Search radius"), { target: { value: "900" } });
+    fireEvent.change(screen.getByLabelText("Minimum population"), {
+      target: { value: "500000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(payload).toEqual(
+      expect.objectContaining({
+        center_latitude: 51.5072,
+        center_longitude: -0.1276,
+        radius_km: 900,
+        min_population: 500000,
+        candidate_limit: 12,
+      }),
+    );
   });
 
   it("loads destination intelligence for visible recommendations", async () => {
@@ -113,13 +172,7 @@ describe("Solo homepage", () => {
                     timezone: "Europe/Lisbon",
                     latitude: 38.7223,
                     longitude: -9.1393,
-                    cost_level: 3,
-                    short_stay_score: 5,
-                    solo_friendliness: 5,
-                    tags: [],
-                    seasonal_strengths: {},
-                    climate_notes: "",
-                    caveats: [],
+                    population: 544851,
                   },
                   score: 91,
                   reasons: ["Matches your preference for warmer destinations."],
@@ -182,6 +235,376 @@ describe("Solo homepage", () => {
     expect(screen.getByText("Belem Tower")).toBeInTheDocument();
     expect(screen.getByText("EUR 118 median hotel")).toBeInTheDocument();
     expect(screen.getByText("Lisbon is moderate for Western Europe.")).toBeInTheDocument();
+  });
+
+  it("lazy-loads intelligence for recommendations after the first three", async () => {
+    const observed: Array<{
+      callback: IntersectionObserverCallback;
+      elements: Element[];
+    }> = [];
+    class MockIntersectionObserver {
+      callback: IntersectionObserverCallback;
+      elements: Element[] = [];
+
+      constructor(callback: IntersectionObserverCallback) {
+        this.callback = callback;
+        observed.push({ callback, elements: this.elements });
+      }
+
+      observe(element: Element) {
+        this.elements.push(element);
+      }
+
+      unobserve(element: Element) {
+        this.elements = this.elements.filter((item) => item !== element);
+      }
+
+      disconnect() {
+        this.elements = [];
+      }
+
+      takeRecords() {
+        return [];
+      }
+    }
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    const destinations = [
+      ["lisbon-pt", "Lisbon", "Portugal", 38.7223, -9.1393],
+      ["porto-pt", "Porto", "Portugal", 41.1579, -8.6291],
+      ["milan-it", "Milan", "Italy", 45.4642, 9.19],
+      ["rome-it", "Rome", "Italy", 41.9028, 12.4964],
+    ] as const;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/recommendations")) {
+        return {
+          ok: true,
+          json: async () => [
+            {
+              travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
+              recommendations: destinations.map(([id, city, country, latitude, longitude], index) => ({
+                travel_window_id: "may",
+                destination: {
+                  id,
+                  city,
+                  country,
+                  latitude,
+                  longitude,
+                  population: 500000,
+                },
+                score: 90 - index,
+                reasons: [`${city} fits this window.`],
+                caveats: [],
+              })),
+            },
+          ],
+        };
+      }
+
+      if (url.includes("/destination-intelligence")) {
+        const body = JSON.parse(String(init?.body));
+        return {
+          ok: true,
+          json: async () => ({
+            destination_city: body.destination_city,
+            country: body.country,
+            climate: {
+              average_temperature_c: 20,
+              precipitation_mm: 3,
+              sunshine_hours: 7,
+              summary: "Mild weather.",
+              source: "Open-Meteo",
+            },
+            attractions: [],
+            hotels: {
+              average_nightly_price: null,
+              median_nightly_price: null,
+              currency: null,
+              sample_size: 0,
+              source: "Amadeus",
+              status: "unavailable",
+            },
+            cost_of_living: {
+              currency: "EUR",
+              summary: `${body.destination_city} cost summary.`,
+              source: "Static Numbeo-compatible seed",
+            },
+            warnings: [],
+          }),
+        };
+      }
+
+      return { ok: true, json: async () => [] };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Rome, Italy")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([url]) => String(url).includes("/destination-intelligence")),
+      ).toHaveLength(3);
+    });
+    expect(screen.queryByText("Rome cost summary.")).not.toBeInTheDocument();
+
+    const romeCard = screen.getByText("Rome, Italy").closest(".card");
+    const romeObserver = observed.find((entry) => entry.elements.includes(romeCard as Element));
+    expect(romeObserver).toBeDefined();
+    act(() => {
+      romeObserver?.callback(
+        [{ isIntersecting: true, target: romeCard } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Rome cost summary.")).toBeInTheDocument();
+    });
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).includes("/destination-intelligence")),
+    ).toHaveLength(4);
+  });
+
+  it("shows a card spinner while destination intelligence is loading", async () => {
+    let resolveIntelligence: (value: {
+      ok: boolean;
+      json: () => Promise<Record<string, unknown>>;
+    }) => void = () => {};
+    const intelligenceResponse = new Promise<{
+      ok: boolean;
+      json: () => Promise<Record<string, unknown>>;
+    }>((resolve) => {
+      resolveIntelligence = resolve;
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/recommendations")) {
+        return {
+          ok: true,
+          json: async () => [
+            {
+              travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
+              recommendations: [
+                {
+                  travel_window_id: "may",
+                  destination: {
+                    id: "lisbon-pt",
+                    city: "Lisbon",
+                    country: "Portugal",
+                    latitude: 38.7223,
+                    longitude: -9.1393,
+                    population: 544851,
+                  },
+                  score: 91,
+                  reasons: ["Matches your preference for warmer destinations."],
+                  caveats: [],
+                },
+              ],
+            },
+          ],
+        };
+      }
+
+      if (url.includes("/destination-intelligence")) {
+        return intelligenceResponse;
+      }
+
+      return { ok: true, json: async () => [] };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Lisbon, Portugal")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("status", { name: "Loading intelligence for Lisbon" })).toBeInTheDocument();
+
+    resolveIntelligence({
+      ok: true,
+      json: async () => ({
+        destination_city: "Lisbon",
+        country: "Portugal",
+        climate: {
+          average_temperature_c: 23,
+          precipitation_mm: 4,
+          sunshine_hours: 9,
+          summary: "Average historical temperature is about 23C for this window.",
+          source: "Open-Meteo",
+        },
+        attractions: [{ name: "Belem Tower", category: "attraction", source: "OpenStreetMap" }],
+        hotels: {
+          average_nightly_price: 121,
+          median_nightly_price: 118,
+          currency: "EUR",
+          sample_size: 12,
+          source: "Amadeus",
+          status: "available",
+        },
+        cost_of_living: {
+          currency: "EUR",
+          summary: "Lisbon is moderate for Western Europe.",
+          source: "Static Numbeo-compatible seed",
+        },
+      }),
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("status", { name: "Loading intelligence for Lisbon" })).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("23C average")).toBeInTheDocument();
+  });
+
+  it("shows which intelligence service failed without hiding recommendations", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/recommendations")) {
+        return {
+          ok: true,
+          json: async () => [
+            {
+              travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
+              recommendations: [
+                {
+                  travel_window_id: "may",
+                  destination: {
+                    id: "lisbon-pt",
+                    city: "Lisbon",
+                    country: "Portugal",
+                    latitude: 38.7223,
+                    longitude: -9.1393,
+                    population: 544851,
+                  },
+                  score: 91,
+                  reasons: ["Matches your preference for warmer destinations."],
+                  caveats: [],
+                },
+              ],
+            },
+          ],
+        };
+      }
+
+      if (url.includes("/destination-intelligence")) {
+        return {
+          ok: false,
+          status: 502,
+          json: async () => ({
+            detail: {
+              step: "climate",
+              service: "Open-Meteo",
+              message: "Open-Meteo failed during climate lookup: timed out",
+            },
+          }),
+        };
+      }
+
+      return { ok: true, json: async () => [] };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Lisbon, Portugal")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load destination intelligence for Lisbon: Open-Meteo failed during climate lookup: timed out",
+    );
+  });
+
+  it("shows warnings from partial destination intelligence", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/recommendations")) {
+        return {
+          ok: true,
+          json: async () => [
+            {
+              travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
+              recommendations: [
+                {
+                  travel_window_id: "may",
+                  destination: {
+                    id: "milan-it",
+                    city: "Metropolitan City of Milan",
+                    country: "Italy",
+                    latitude: 45.4642,
+                    longitude: 9.19,
+                    population: 1366180,
+                  },
+                  score: 83,
+                  reasons: ["Good rail access and food density."],
+                  caveats: [],
+                },
+              ],
+            },
+          ],
+        };
+      }
+
+      if (url.includes("/destination-intelligence")) {
+        return {
+          ok: true,
+          json: async () => ({
+            destination_city: "Metropolitan City of Milan",
+            country: "Italy",
+            climate: {
+              average_temperature_c: 20,
+              precipitation_mm: 3,
+              sunshine_hours: 7,
+              summary: "Mild weather.",
+              source: "Open-Meteo",
+            },
+            attractions: [],
+            hotels: {
+              average_nightly_price: null,
+              median_nightly_price: null,
+              currency: null,
+              sample_size: 0,
+              source: "Amadeus",
+              status: "unavailable",
+            },
+            cost_of_living: {
+              currency: "EUR",
+              summary: "Milan is expensive for Italy.",
+              source: "Static Numbeo-compatible seed",
+            },
+            warnings: [
+              {
+                step: "attractions",
+                service: "OpenStreetMap",
+                message: "OpenStreetMap failed during attractions lookup: The read operation timed out",
+              },
+            ],
+          }),
+        };
+      }
+
+      return { ok: true, json: async () => [] };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("20C average")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Some destination intelligence is unavailable for Metropolitan City of Milan: OpenStreetMap failed during attractions lookup: The read operation timed out",
+    );
   });
 
   it("keeps the calendar read-only until the user starts adding a range", () => {
@@ -277,9 +700,9 @@ describe("Solo homepage", () => {
                     id: "porto-pt",
                     city: "Porto",
                     country: "Portugal",
-                    tags: [],
-                    climate_notes: "",
-                    caveats: [],
+                    latitude: 41.1579,
+                    longitude: -8.6291,
+                    population: 231800,
                   },
                   score: 88,
                   reasons: ["Fits the drafted date range."],

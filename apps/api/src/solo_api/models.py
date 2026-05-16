@@ -48,16 +48,12 @@ class Destination(BaseModel):
     id: str
     city: str
     country: str
-    timezone: str
+    timezone: str | None = None
     latitude: float
     longitude: float
-    cost_level: int = Field(ge=1, le=5)
-    short_stay_score: int = Field(ge=1, le=5)
-    solo_friendliness: int = Field(ge=1, le=5)
-    tags: list[str]
-    seasonal_strengths: dict[str, list[str]]
-    climate_notes: str
-    caveats: list[str] = Field(default_factory=list)
+    population: int | None = None
+    region: str | None = None
+    country_code: str | None = None
 
 
 class RecommendationScoreBreakdown(BaseModel):
@@ -71,6 +67,13 @@ class RecommendationScoreBreakdown(BaseModel):
 
 class RecommendationRequest(BaseModel):
     home_city: str
+    center_latitude: float | None = None
+    center_longitude: float | None = None
+    radius_km: int = Field(default=1800, ge=1, le=5000)
+    min_population: int = Field(default=250000, ge=0)
+    candidate_limit: int = Field(default=12, ge=1, le=50)
+    region: str | None = None
+    q: str | None = None
     travel_windows: list[TravelWindow]
     preferences: PreferenceProfile = Field(default_factory=PreferenceProfile)
     excluded_destination_ids: list[str] = Field(default_factory=list)
@@ -176,6 +179,12 @@ class CostOfLivingSummary(BaseModel):
     source: str
 
 
+class DestinationIntelligenceWarning(BaseModel):
+    step: str
+    service: str
+    message: str
+
+
 class DestinationIntelligence(BaseModel):
     destination_city: str
     country: str
@@ -183,3 +192,4 @@ class DestinationIntelligence(BaseModel):
     attractions: list[AttractionSummary]
     hotels: HotelPriceSummary
     cost_of_living: CostOfLivingSummary
+    warnings: list[DestinationIntelligenceWarning] = []

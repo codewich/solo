@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DestinationMap } from "./destination-map";
-import { fetchDestinationIntelligence, fetchRecommendations } from "@/lib/api";
+import { ApiRequestError, fetchDestinationIntelligence, fetchRecommendations } from "@/lib/api";
 import { formatWindowLabel } from "@/lib/date-windows";
 import { inferPaceFromRange } from "@/lib/travel-pacing";
 import type {
   DestinationIntelligence,
   HomeLocation,
+  Recommendation,
   RecommendationGroup,
   TravelWindow,
 } from "@/lib/types";
@@ -31,6 +32,117 @@ type CalendarDate = {
   label: string;
   isCurrentMonth: boolean;
 };
+
+type IntelligenceError = {
+  destinationId: string;
+  city: string;
+  message: string;
+  severity: "warning" | "error";
+};
+
+type DestinationCardProps = {
+  item: Recommendation;
+  intelligence?: DestinationIntelligence;
+  isIntelligenceLoading: boolean;
+  shouldLazyLoad: boolean;
+  onVisible: () => void;
+};
+
+function DestinationCard({
+  item,
+  intelligence,
+  isIntelligenceLoading,
+  shouldLazyLoad,
+  onVisible,
+}: DestinationCardProps) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const city = item.destination.city;
+  const country = item.destination.country;
+  const why = item.reasons[0];
+
+  useEffect(() => {
+    if (!shouldLazyLoad || !cardRef.current || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onVisible();
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "160px" },
+    );
+    observer.observe(cardRef.current);
+    return () => observer.disconnect();
+  }, [onVisible, shouldLazyLoad]);
+
+  return (
+    <div className="card" key={city} ref={cardRef}>
+      <div className="row">
+        <h3>
+          {city}, {country}
+        </h3>
+        <button
+          className="score score-tooltip"
+          type="button"
+          aria-label={`Score breakdown for ${city}`}
+        >
+          {item.score}
+          {item.score_breakdown ? (
+            <span className="score-tooltip-panel" role="tooltip">
+              <span>Climate: {item.score_breakdown.climateScore}</span>
+              <span>Attractions: {item.score_breakdown.attractionScore}</span>
+              <span>Popularity: {item.score_breakdown.popularityScore}</span>
+              <span>Affordability: {item.score_breakdown.affordabilityScore}</span>
+            </span>
+          ) : null}
+        </button>
+      </div>
+      <p className="muted">{why}</p>
+      <div className="row">
+        <span className="pill">4 days</span>
+        <span className="pill">solo-friendly</span>
+        <span className="pill">walkable</span>
+      </div>
+      {isIntelligenceLoading ? (
+        <div
+          aria-label={`Loading intelligence for ${city}`}
+          className="destination-intelligence-loading"
+          role="status"
+        >
+          <span className="spinner" aria-hidden="true" />
+          <span>Loading intelligence</span>
+        </div>
+      ) : null}
+      {intelligence ? (
+        <div className="destination-intelligence">
+          {intelligence.climate?.average_temperature_c !== null &&
+          intelligence.climate?.average_temperature_c !== undefined ? (
+            <span className="pill">{intelligence.climate.average_temperature_c}C average</span>
+          ) : null}
+          {intelligence.attractions?.[0] ? (
+            <span className="pill">{intelligence.attractions[0].name}</span>
+          ) : null}
+          {intelligence.hotels?.status === "available" &&
+          intelligence.hotels.currency &&
+          intelligence.hotels.median_nightly_price !== null ? (
+            <span className="pill">
+              {intelligence.hotels.currency}{" "}
+              {Math.round(intelligence.hotels.median_nightly_price)} median hotel
+            </span>
+          ) : (
+            <span className="pill">Hotel prices unavailable</span>
+          )}
+          {intelligence.cost_of_living?.summary ? (
+            <p className="muted">{intelligence.cost_of_living.summary}</p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const initialTravelWindows: PlanningWindow[] = [
   {
@@ -186,7 +298,15 @@ export default function Page() {
   const [destinationIntelligence, setDestinationIntelligence] = useState<
     Record<string, DestinationIntelligence>
   >({});
+  const [intelligenceErrors, setIntelligenceErrors] = useState<IntelligenceError[]>([]);
+  const [intelligenceLoadingIds, setIntelligenceLoadingIds] = useState<string[]>([]);
+  const [radiusKm, setRadiusKm] = useState(1800);
+  const [minPopulation, setMinPopulation] = useState(250000);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const loadedIntelligenceIdsRef = useRef(new Set<string>());
+  const loadingIntelligenceIdsRef = useRef(new Set<string>());
+  const failedIntelligenceIdsRef = useRef(new Set<string>());
+  const intelligenceRequestVersionRef = useRef(0);
 
   const homeCity = homeLocation.city;
   const selectedTravelWindow = selectedTravelWindowId
@@ -210,6 +330,11 @@ export default function Page() {
             country: item.destination.country,
             score: item.score,
             summary: item.reasons[0],
+            coordinates:
+              typeof item.destination.longitude === "number" &&
+              typeof item.destination.latitude === "number"
+                ? ([item.destination.longitude, item.destination.latitude] as [number, number])
+                : undefined,
           })),
     [activeRecommendations],
   );
@@ -248,6 +373,79 @@ export default function Page() {
     });
   }
 
+  const loadDestinationIntelligence = useCallback(
+    async (item: Recommendation, travelWindow: TravelWindow, requestVersion: number) => {
+      const id = item.destination.id;
+      if (
+        loadedIntelligenceIdsRef.current.has(id) ||
+        loadingIntelligenceIdsRef.current.has(id) ||
+        failedIntelligenceIdsRef.current.has(id) ||
+        typeof item.destination.latitude !== "number" ||
+        typeof item.destination.longitude !== "number"
+      ) {
+        return;
+      }
+
+      loadingIntelligenceIdsRef.current.add(id);
+      setIntelligenceLoadingIds((currentIds) =>
+        currentIds.includes(id) ? currentIds : [...currentIds, id],
+      );
+
+      try {
+        const intelligence = await fetchDestinationIntelligence({
+          destination_city: item.destination.city,
+          country: item.destination.country,
+          latitude: item.destination.latitude,
+          longitude: item.destination.longitude,
+          start_date: travelWindow.start_date,
+          end_date: travelWindow.end_date,
+        });
+        if (requestVersion !== intelligenceRequestVersionRef.current) {
+          return;
+        }
+        loadedIntelligenceIdsRef.current.add(id);
+        setDestinationIntelligence((currentIntelligence) => ({
+          ...currentIntelligence,
+          [id]: intelligence,
+        }));
+        setIntelligenceErrors((currentErrors) => [
+          ...currentErrors.filter((error) => error.destinationId !== id),
+          ...(intelligence.warnings?.map((warning) => ({
+            destinationId: id,
+            city: item.destination.city,
+            message: warning.message,
+            severity: "warning" as const,
+          })) ?? []),
+        ]);
+      } catch (reason) {
+        if (requestVersion !== intelligenceRequestVersionRef.current) {
+          return;
+        }
+        failedIntelligenceIdsRef.current.add(id);
+        setIntelligenceErrors((currentErrors) => [
+          ...currentErrors.filter((error) => error.destinationId !== id),
+          {
+            destinationId: id,
+            city: item.destination.city,
+            message:
+              reason instanceof ApiRequestError
+                ? reason.message
+                : "Destination intelligence request failed.",
+            severity: "error",
+          },
+        ]);
+      } finally {
+        loadingIntelligenceIdsRef.current.delete(id);
+        if (requestVersion === intelligenceRequestVersionRef.current) {
+          setIntelligenceLoadingIds((currentIds) =>
+            currentIds.filter((currentId) => currentId !== id),
+          );
+        }
+      }
+    },
+    [],
+  );
+
   async function handleFindDestinations() {
     const isSavingDraftRange = draftRange !== null && isDraftComplete;
     const targetWindow = isSavingDraftRange
@@ -268,9 +466,21 @@ export default function Page() {
     }
 
     setStatus("loading");
+    setIntelligenceErrors([]);
+    setIntelligenceLoadingIds([]);
+    loadedIntelligenceIdsRef.current.clear();
+    loadingIntelligenceIdsRef.current.clear();
+    failedIntelligenceIdsRef.current.clear();
+    intelligenceRequestVersionRef.current += 1;
+    const intelligenceRequestVersion = intelligenceRequestVersionRef.current;
     try {
       const results = await fetchRecommendations({
         home_city: homeCity,
+        center_latitude: homeLocation.latitude,
+        center_longitude: homeLocation.longitude,
+        radius_km: radiusKm,
+        min_population: minPopulation,
+        candidate_limit: 12,
         travel_windows: [
           {
             id: targetWindow.id,
@@ -295,33 +505,25 @@ export default function Page() {
         ?.travel_window;
       const activeItems =
         results.find((group) => group.travel_window.id === targetWindow.id)?.recommendations ?? [];
-      const intelligenceEntries = await Promise.all(
-        activeItems
-          .slice(0, 3)
-          .filter(
-            (item) =>
-              typeof item.destination.latitude === "number" &&
-              typeof item.destination.longitude === "number",
-          )
-          .map(async (item) => {
-            const intelligence = await fetchDestinationIntelligence({
-              destination_city: item.destination.city,
-              country: item.destination.country,
-              latitude: item.destination.latitude as number,
-              longitude: item.destination.longitude as number,
-              start_date: activeWindow?.start_date ?? targetWindow.start_date,
-              end_date: activeWindow?.end_date ?? targetWindow.end_date,
-            });
-            return [item.destination.id, intelligence] as const;
-          }),
+      const intelligenceTargets = activeItems.slice(0, 3).filter(
+        (item) =>
+          typeof item.destination.latitude === "number" &&
+          typeof item.destination.longitude === "number",
       );
-      setDestinationIntelligence(Object.fromEntries(intelligenceEntries));
+      setDestinationIntelligence({});
       setGroups((currentGroups) => [
         ...currentGroups.filter((group) => group.travel_window.id !== targetWindow.id),
         ...results,
       ]);
       setStatus("ready");
+      const intelligenceWindow = activeWindow ?? targetWindow;
+      void Promise.all(
+        intelligenceTargets.map((item) =>
+          loadDestinationIntelligence(item, intelligenceWindow, intelligenceRequestVersion),
+        ),
+      );
     } catch {
+      setIntelligenceLoadingIds([]);
       setStatus("error");
     }
   }
@@ -646,6 +848,29 @@ export default function Page() {
               <span className="pill">Warm</span>
               <span className="pill">Food</span>
             </div>
+            <label>
+              Search radius
+              <input
+                aria-label="Search radius"
+                min={100}
+                max={5000}
+                step={100}
+                type="number"
+                value={radiusKm}
+                onChange={(event) => setRadiusKm(Number(event.target.value))}
+              />
+            </label>
+            <label>
+              Minimum population
+              <input
+                aria-label="Minimum population"
+                min={0}
+                step={50000}
+                type="number"
+                value={minPopulation}
+                onChange={(event) => setMinPopulation(Number(event.target.value))}
+              />
+            </label>
             <p className="muted">Excluded: Paris, Amsterdam, Barcelona</p>
             <button
               className="primary-button"
@@ -656,6 +881,13 @@ export default function Page() {
               {status === "loading" ? "Finding..." : "Find destinations"}
             </button>
             {status === "error" ? <p role="alert">Could not load recommendations.</p> : null}
+            {intelligenceErrors.map((error) => (
+              <p className="notice warning" key={error.destinationId} role="alert">
+                {error.severity === "warning"
+                  ? `Some destination intelligence is unavailable for ${error.city}: ${error.message}`
+                  : `Could not load destination intelligence for ${error.city}: ${error.message}`}
+              </p>
+            ))}
           </div>
         </aside>
 
@@ -663,6 +895,7 @@ export default function Page() {
           destinations={mapDestinations}
           homeCity={homeCity}
           homeCoordinates={[homeLocation.longitude, homeLocation.latitude]}
+          radiusKm={radiusKm}
           showDestinationPins={activeRecommendations.length > 0}
         />
 
@@ -676,51 +909,35 @@ export default function Page() {
             </p>
           </div>
 
-          {activeRecommendations.map((item) => {
-            const city = item.destination.city;
-            const country = item.destination.country;
-            const why = item.reasons[0];
+          {activeRecommendations.map((item, index) => {
             const id = item.destination.id;
             const intelligence = destinationIntelligence[id];
+            const isIntelligenceLoading = intelligenceLoadingIds.includes(id);
+            const canLazyLoad =
+              index >= 3 &&
+              activeGroup?.travel_window !== undefined &&
+              !intelligence &&
+              !isIntelligenceLoading &&
+              !intelligenceErrors.some((error) => error.destinationId === id);
+            const intelligenceWindow = activeGroup?.travel_window ?? selectedTravelWindow;
 
             return (
-            <div className="card" key={city}>
-              <div className="row">
-                <h3>
-                  {city}, {country}
-                </h3>
-                <span className="score">{item.score}</span>
-              </div>
-              <p className="muted">{why}</p>
-              <div className="row">
-                <span className="pill">4 days</span>
-                <span className="pill">solo-friendly</span>
-                <span className="pill">walkable</span>
-              </div>
-              {intelligence ? (
-                <div className="destination-intelligence">
-                  {intelligence.climate.average_temperature_c !== null ? (
-                    <span className="pill">
-                      {intelligence.climate.average_temperature_c}C average
-                    </span>
-                  ) : null}
-                  {intelligence.attractions[0] ? (
-                    <span className="pill">{intelligence.attractions[0].name}</span>
-                  ) : null}
-                  {intelligence.hotels.status === "available" &&
-                  intelligence.hotels.currency &&
-                  intelligence.hotels.median_nightly_price !== null ? (
-                    <span className="pill">
-                      {intelligence.hotels.currency}{" "}
-                      {Math.round(intelligence.hotels.median_nightly_price)} median hotel
-                    </span>
-                  ) : (
-                    <span className="pill">Hotel prices unavailable</span>
-                  )}
-                  <p className="muted">{intelligence.cost_of_living.summary}</p>
-                </div>
-              ) : null}
-            </div>
+              <DestinationCard
+                intelligence={intelligence}
+                isIntelligenceLoading={isIntelligenceLoading}
+                item={item}
+                key={id}
+                onVisible={() => {
+                  if (intelligenceWindow) {
+                    void loadDestinationIntelligence(
+                      item,
+                      intelligenceWindow,
+                      intelligenceRequestVersionRef.current,
+                    );
+                  }
+                }}
+                shouldLazyLoad={canLazyLoad}
+              />
             );
           })}
         </aside>

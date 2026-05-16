@@ -20,6 +20,13 @@ export type PreferenceProfile = {
 
 export type RecommendationRequest = {
   home_city: string;
+  center_latitude?: number;
+  center_longitude?: number;
+  radius_km?: number;
+  min_population?: number;
+  candidate_limit?: number;
+  region?: string | null;
+  q?: string | null;
   travel_windows: TravelWindow[];
   preferences: PreferenceProfile;
   excluded_destination_ids: string[];
@@ -32,13 +39,9 @@ export type Destination = {
   timezone?: string | null;
   latitude?: number;
   longitude?: number;
-  cost_level?: number;
-  short_stay_score?: number;
-  solo_friendliness?: number;
-  tags: string[];
-  seasonal_strengths?: Record<string, number>;
-  climate_notes: string;
-  caveats: string[];
+  population?: number | null;
+  region?: string | null;
+  country_code?: string | null;
 };
 
 export type Recommendation = {
@@ -127,4 +130,9 @@ export type DestinationIntelligence = {
     summary: string;
     source: string;
   };
+  warnings?: Array<{
+    step: string;
+    service: string;
+    message: string;
+  }>;
 };

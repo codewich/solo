@@ -70,15 +70,15 @@ def get_destination_signals(destination: Destination, window: TravelWindow) -> D
         )
     except Exception:
         attractions = []
-        warnings.append("OpenStreetMap unavailable; attraction score used seed tags only.")
+        warnings.append("OpenStreetMap unavailable; attraction score used a neutral fallback.")
 
     try:
         summary = fetch_wikimedia_summary(destination.city)
         if summary is None:
-            warnings.append("Wikimedia unavailable; popularity score used seed tags only.")
+            warnings.append("Wikimedia unavailable; popularity score used population only.")
     except Exception:
         summary = None
-        warnings.append("Wikimedia unavailable; popularity score used seed tags only.")
+        warnings.append("Wikimedia unavailable; popularity score used population only.")
 
     cost_of_living = StaticCostOfLivingProvider().summary_for(
         city=destination.city,
