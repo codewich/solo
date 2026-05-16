@@ -61,6 +61,7 @@ class RecommendationScoreBreakdown(BaseModel):
     attraction_score: int = Field(alias="attractionScore")
     popularity_score: int = Field(alias="popularityScore")
     affordability_score: int = Field(alias="affordabilityScore")
+    air_quality_score: int = Field(default=6, alias="airQualityScore")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -88,9 +89,14 @@ class Recommendation(BaseModel):
     score_breakdown: RecommendationScoreBreakdown | None = None
     best_months_to_visit: list[str] = Field(default_factory=list)
     top_attractions: list[str] = Field(default_factory=list)
+    attraction_count: int = Field(default=0, alias="attractionCount")
     estimated_daily_budget: float | None = None
     summary: str | None = None
+    image_url: str | None = Field(default=None, alias="imageUrl")
+    air_quality: "AirQualitySummary | None" = Field(default=None, alias="airQuality")
     warning: str | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class RecommendationGroup(BaseModel):
@@ -112,8 +118,11 @@ class RecommendedDestination(BaseModel):
     score_breakdown: RecommendationScoreBreakdown = Field(alias="scoreBreakdown")
     best_months_to_visit: list[str] = Field(alias="bestMonthsToVisit")
     top_attractions: list[str] = Field(alias="topAttractions")
+    attraction_count: int = Field(default=0, alias="attractionCount")
     estimated_daily_budget: float | None = Field(default=None, alias="estimatedDailyBudget")
     summary: str | None = None
+    image_url: str | None = Field(default=None, alias="imageUrl")
+    air_quality: "AirQualitySummary | None" = Field(default=None, alias="airQuality")
     warning: str | None = None
 
     model_config = ConfigDict(populate_by_name=True)
@@ -177,6 +186,15 @@ class CostOfLivingSummary(BaseModel):
     local_transport_ticket: float | None = None
     summary: str
     source: str
+
+
+class AirQualitySummary(BaseModel):
+    pm25: float | None = None
+    pm10: float | None = None
+    no2: float | None = None
+    summary: str
+    source: str = "OpenAQ"
+    status: Literal["available", "unavailable"] = "available"
 
 
 class DestinationIntelligenceWarning(BaseModel):

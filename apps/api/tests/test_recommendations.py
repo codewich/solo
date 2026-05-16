@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from solo_api.main import app
 from solo_api.models import (
+    AirQualitySummary,
     AttractionSummary,
     ClimateSummary,
     CostOfLivingSummary,
@@ -43,7 +44,17 @@ def stub_live_signals(monkeypatch):
                 AttractionSummary(name="Museum", category="museum", source="OpenStreetMap"),
                 AttractionSummary(name="Viewpoint", category="viewpoint", source="OpenStreetMap"),
             ],
+            "attraction_count": 2,
             "summary": f"{destination.city} has a useful travel summary.",
+            "image_url": f"https://images.example/{destination.city}.jpg",
+            "air_quality": AirQualitySummary(
+                pm25=8.0,
+                pm10=14.0,
+                no2=None,
+                summary="Good air quality.",
+                source="OpenAQ",
+                status="available",
+            ),
             "cost_of_living": CostOfLivingSummary(
                 currency="EUR",
                 meal_inexpensive=14,
@@ -141,7 +152,17 @@ def test_recommendations_include_live_score_breakdown(monkeypatch):
                 AttractionSummary(name=f"Attraction {index}", category="museum", source="OpenStreetMap")
                 for index in range(6)
             ],
+            "attraction_count": 6,
             "summary": "A well documented city with strong cultural presence.",
+            "image_url": "https://images.example/lisbon.jpg",
+            "air_quality": AirQualitySummary(
+                pm25=7.0,
+                pm10=12.0,
+                no2=20.0,
+                summary="Good air quality.",
+                source="OpenAQ",
+                status="available",
+            ),
             "cost_of_living": CostOfLivingSummary(
                 currency="EUR",
                 meal_inexpensive=12,
@@ -172,14 +193,19 @@ def test_recommendations_include_live_score_breakdown(monkeypatch):
         + first.score_breakdown.attraction_score
         + first.score_breakdown.popularity_score
         + first.score_breakdown.affordability_score
+        + first.score_breakdown.air_quality_score
     )
-    assert first.top_attractions[:2] == ["Attraction 0", "Attraction 1"]
+    assert first.attraction_count == 6
+    assert first.top_attractions == []
     assert first.summary == "A well documented city with strong cultural presence."
+    assert first.image_url == "https://images.example/lisbon.jpg"
+    assert first.air_quality is not None
+    assert first.air_quality.status == "available"
 
 
 def test_destination_signals_are_cached(monkeypatch):
     SIGNAL_CACHE._values.clear()
-    calls = {"climate": 0, "attractions": 0, "summary": 0}
+    calls = {"climate": 0, "attractions": 0, "summary": 0, "image": 0, "air_quality": 0}
 
     def fake_climate(**kwargs):
         calls["climate"] += 1
@@ -190,17 +216,34 @@ def test_destination_signals_are_cached(monkeypatch):
             summary="Cached climate.",
         )
 
-    def fake_attractions(**kwargs):
+    def fake_attraction_count(**kwargs):
         calls["attractions"] += 1
-        return [AttractionSummary(name="Museum", category="museum", source="OpenStreetMap")]
+        return 8
 
     def fake_summary(city):
         calls["summary"] += 1
         return f"{city} summary"
 
+    def fake_image(city):
+        calls["image"] += 1
+        return f"https://images.example/{city}.jpg"
+
+    def fake_air_quality(**kwargs):
+        calls["air_quality"] += 1
+        return AirQualitySummary(
+            pm25=9.0,
+            pm10=None,
+            no2=None,
+            summary="Good air quality.",
+            source="OpenAQ",
+            status="available",
+        )
+
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_climate_summary", fake_climate)
-    monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", fake_attractions)
+    monkeypatch.setattr("solo_api.recommendation_signals.count_attractions", fake_attraction_count)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", fake_summary)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", fake_image)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_air_quality_summary", fake_air_quality)
 
     destination = city()
     window = TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25))
@@ -209,7 +252,7 @@ def test_destination_signals_are_cached(monkeypatch):
     second = get_destination_signals(destination, window)
 
     assert first == second
-    assert calls == {"climate": 1, "attractions": 1, "summary": 1}
+    assert calls == {"climate": 1, "attractions": 1, "summary": 1, "image": 1, "air_quality": 1}
 
 
 def test_destination_signals_fall_back_with_warning(monkeypatch):
@@ -219,8 +262,13 @@ def test_destination_signals_fall_back_with_warning(monkeypatch):
         raise RuntimeError("weather down")
 
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_climate_summary", broken_climate)
-    monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", lambda **kwargs: [])
+    monkeypatch.setattr("solo_api.recommendation_signals.count_attractions", lambda **kwargs: 0)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.fetch_air_quality_summary",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("openaq down")),
+    )
 
     destination = city()
     signals = get_destination_signals(
@@ -229,8 +277,11 @@ def test_destination_signals_fall_back_with_warning(monkeypatch):
     )
 
     assert signals.climate.average_temperature_c is None
+    assert signals.attraction_count == 0
+    assert signals.air_quality.status == "unavailable"
     assert any("Open-Meteo unavailable" in warning for warning in signals.warnings)
     assert any("Wikimedia unavailable" in warning for warning in signals.warnings)
+    assert any("OpenAQ unavailable" in warning for warning in signals.warnings)
 
 
 def test_recommended_destinations_endpoint_returns_direct_search_shape(monkeypatch):
@@ -245,7 +296,17 @@ def test_recommended_destinations_endpoint_returns_direct_search_shape(monkeypat
             "attractions": [
                 AttractionSummary(name="Central Museum", category="museum", source="OpenStreetMap")
             ],
+            "attraction_count": 4,
             "summary": f"{destination.city} summary.",
+            "image_url": "https://images.example/city.jpg",
+            "air_quality": AirQualitySummary(
+                pm25=11.0,
+                pm10=20.0,
+                no2=None,
+                summary="Fair air quality.",
+                source="OpenAQ",
+                status="available",
+            ),
             "cost_of_living": CostOfLivingSummary(
                 currency="EUR",
                 meal_inexpensive=11,
@@ -271,7 +332,11 @@ def test_recommended_destinations_endpoint_returns_direct_search_shape(monkeypat
     assert body[0]["name"] == "Lisbon"
     assert body[0]["coordinates"] == {"lat": 38.7223, "lng": -9.1393}
     assert body[0]["travelScore"] == sum(body[0]["scoreBreakdown"].values())
-    assert body[0]["topAttractions"] == ["Central Museum"]
+    assert body[0]["topAttractions"] == []
+    assert body[0]["attractionCount"] == 4
+    assert body[0]["imageUrl"] == "https://images.example/city.jpg"
+    assert body[0]["airQuality"]["status"] == "available"
+    assert "airQualityScore" in body[0]["scoreBreakdown"]
 
 
 def test_recommendations_query_city_candidates_with_radius_and_population(monkeypatch):

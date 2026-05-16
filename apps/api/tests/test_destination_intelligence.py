@@ -3,7 +3,7 @@ from datetime import date
 import httpx
 from fastapi.testclient import TestClient
 
-from solo_api.attractions import AttractionLookupError, fetch_attractions
+from solo_api.attractions import AttractionLookupError, count_attractions, fetch_attractions
 from solo_api.cache import TtlCache
 from solo_api.cost_of_living import StaticCostOfLivingProvider
 from solo_api.hotels import summarize_hotel_prices
@@ -184,6 +184,28 @@ def test_fetch_attractions_uses_narrow_named_poi_query(monkeypatch):
     assert '["amenity"="place_of_worship"]' not in query
     assert '["historic"];' not in query
     assert captured["timeout"].read == 12.0
+
+
+def test_count_attractions_uses_overpass_wrapper(monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    class FakeOverpassApi:
+        def __init__(self, *, user_agent: str, timeout: int):
+            calls.append({"user_agent": user_agent, "timeout": timeout})
+
+        def get(self, query: str, *, responseformat: str, build: bool):
+            calls.append({"query": query, "responseformat": responseformat, "build": build})
+            return {"elements": [{"id": 1}, {"id": 2}, {"id": 3}]}
+
+    monkeypatch.setattr("solo_api.attractions.overpass.API", FakeOverpassApi)
+
+    count = count_attractions(latitude=51.5072, longitude=-0.1276, radius_m=2500)
+
+    assert count == 3
+    assert calls[0] == {"user_agent": "solo-travel-planner/0.1", "timeout": 12}
+    assert calls[1]["responseformat"] == "json"
+    assert calls[1]["build"] is False
+    assert '["tourism"~"museum|attraction|viewpoint|gallery"]["name"]' in str(calls[1]["query"])
 
 
 def test_fetch_attractions_keeps_pois_when_wikimedia_summary_is_forbidden(monkeypatch):

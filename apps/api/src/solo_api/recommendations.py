@@ -3,7 +3,7 @@ from typing import Any
 
 from solo_api.city_candidates import search_city_candidates
 from solo_api.models import (
-    AttractionSummary,
+    AirQualitySummary,
     ClimateSummary,
     CoordinatesResult,
     CostOfLivingSummary,
@@ -27,8 +27,19 @@ def _signals_from_value(value: DestinationSignals | dict[str, Any]) -> Destinati
 
     return DestinationSignals(
         climate=value["climate"],
-        attractions=value.get("attractions", []),
+        attraction_count=value.get("attraction_count", len(value.get("attractions", []))),
         summary=value.get("summary"),
+        image_url=value.get("image_url"),
+        air_quality=value.get(
+            "air_quality",
+            AirQualitySummary(
+                pm25=None,
+                pm10=None,
+                no2=None,
+                summary="Air quality data is unavailable; ranking used a neutral fallback.",
+                status="unavailable",
+            ),
+        ),
         cost_of_living=value["cost_of_living"],
         warnings=value.get("warnings", []),
     )
@@ -55,9 +66,9 @@ def _climate_score(climate: ClimateSummary) -> int:
     return max(0, min(35, score))
 
 
-def _attraction_score(attractions: list[AttractionSummary], destination: Destination) -> int:
-    score = min(25, len(attractions) * 4)
-    if not attractions:
+def _attraction_score(attraction_count: int, destination: Destination) -> int:
+    score = min(25, attraction_count * 4)
+    if attraction_count == 0:
         score = 6
     return score
 
@@ -86,6 +97,21 @@ def _affordability_score(cost: CostOfLivingSummary, destination: Destination) ->
     return max(0, min(20, score))
 
 
+def _air_quality_score(air_quality: AirQualitySummary) -> int:
+    if air_quality.status == "unavailable":
+        return 6
+    pm25 = air_quality.pm25
+    if pm25 is None:
+        return 6
+    if pm25 <= 10:
+        return 10
+    if pm25 <= 15:
+        return 8
+    if pm25 <= 25:
+        return 5
+    return 2
+
+
 def _estimated_daily_budget(cost: CostOfLivingSummary, destination: Destination) -> float | None:
     if cost.meal_inexpensive is not None and cost.coffee is not None and cost.local_transport_ticket is not None:
         return round(cost.meal_inexpensive * 2 + cost.coffee * 2 + cost.local_transport_ticket * 2, 2)
@@ -102,9 +128,10 @@ def score_destination(
     raw_signals = get_destination_signals(destination, window)
     signals = _signals_from_value(raw_signals)
     climate_score = _climate_score(signals.climate)
-    attraction_score = _attraction_score(signals.attractions, destination)
+    attraction_score = _attraction_score(signals.attraction_count, destination)
     popularity_score = _popularity_score(signals.summary, destination)
     affordability_score = _affordability_score(signals.cost_of_living, destination)
+    air_quality_score = _air_quality_score(signals.air_quality)
 
     if request.preferences.climate == "warm" and signals.climate.average_temperature_c is not None:
         if signals.climate.average_temperature_c >= 18:
@@ -117,12 +144,14 @@ def score_destination(
         attraction_score=attraction_score,
         popularity_score=popularity_score,
         affordability_score=affordability_score,
+        air_quality_score=air_quality_score,
     )
     score = (
         breakdown.climate_score
         + breakdown.attraction_score
         + breakdown.popularity_score
         + breakdown.affordability_score
+        + breakdown.air_quality_score
     )
 
     reasons = [
@@ -130,6 +159,7 @@ def score_destination(
         f"Live attraction density contributes {breakdown.attraction_score} points.",
         f"Popularity context contributes {breakdown.popularity_score} points.",
         f"Affordability contributes {breakdown.affordability_score} points.",
+        f"Air quality contributes {breakdown.air_quality_score} points.",
     ]
 
     return score, breakdown, reasons, signals.warnings, signals
@@ -150,9 +180,12 @@ def _recommendation_for(
         caveats=[" ".join(warnings)] if warnings else [],
         score_breakdown=breakdown,
         best_months_to_visit=_best_months_to_visit(destination),
-        top_attractions=[attraction.name for attraction in signals.attractions[:5]],
+        top_attractions=[],
+        attraction_count=signals.attraction_count,
         estimated_daily_budget=_estimated_daily_budget(signals.cost_of_living, destination),
         summary=signals.summary,
+        image_url=signals.image_url,
+        air_quality=signals.air_quality,
         warning=" ".join(warnings) if warnings else None,
     )
 
@@ -229,8 +262,11 @@ def recommended_destinations_search(
             score_breakdown=item.score_breakdown,
             best_months_to_visit=item.best_months_to_visit,
             top_attractions=item.top_attractions,
+            attraction_count=item.attraction_count,
             estimated_daily_budget=item.estimated_daily_budget,
             summary=item.summary,
+            image_url=item.image_url,
+            air_quality=item.air_quality,
             warning=item.warning,
         )
         for item in recommendations

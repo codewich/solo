@@ -59,6 +59,14 @@ function DestinationCard({
   const city = item.destination.city;
   const country = item.destination.country;
   const why = item.reasons[0];
+  const imageUrl = item.image_url ?? item.imageUrl;
+  const attractionCount = item.attraction_count ?? item.attractionCount;
+  const airQuality = item.air_quality ?? item.airQuality;
+  const cardStyle = imageUrl
+    ? {
+        backgroundImage: `linear-gradient(rgba(23, 33, 29, 0.72), rgba(23, 33, 29, 0.72)), url(${imageUrl})`,
+      }
+    : undefined;
 
   useEffect(() => {
     if (!shouldLazyLoad || !cardRef.current || typeof IntersectionObserver === "undefined") {
@@ -79,7 +87,7 @@ function DestinationCard({
   }, [onVisible, shouldLazyLoad]);
 
   return (
-    <div className="card" key={city} ref={cardRef}>
+    <div className={`card recommendation-card${imageUrl ? " has-image" : ""}`} key={city} ref={cardRef} style={cardStyle}>
       <div className="row">
         <h3>
           {city}, {country}
@@ -96,6 +104,9 @@ function DestinationCard({
               <span>Attractions: {item.score_breakdown.attractionScore}</span>
               <span>Popularity: {item.score_breakdown.popularityScore}</span>
               <span>Affordability: {item.score_breakdown.affordabilityScore}</span>
+              {item.score_breakdown.airQualityScore !== undefined ? (
+                <span>Air: {item.score_breakdown.airQualityScore}</span>
+              ) : null}
             </span>
           ) : null}
         </button>
@@ -105,7 +116,11 @@ function DestinationCard({
         <span className="pill">4 days</span>
         <span className="pill">solo-friendly</span>
         <span className="pill">walkable</span>
+        {attractionCount !== undefined ? (
+          <span className="pill">{attractionCount} attractions nearby</span>
+        ) : null}
       </div>
+      {airQuality?.summary ? <p className="muted">{airQuality.summary}</p> : null}
       {isIntelligenceLoading ? (
         <div
           aria-label={`Loading intelligence for ${city}`}
@@ -849,13 +864,13 @@ export default function Page() {
               <span className="pill">Food</span>
             </div>
             <label>
-              Search radius
+              Search radius: {radiusKm} km
               <input
                 aria-label="Search radius"
                 min={100}
                 max={5000}
                 step={100}
-                type="number"
+                type="range"
                 value={radiusKm}
                 onChange={(event) => setRadiusKm(Number(event.target.value))}
               />

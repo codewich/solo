@@ -1,4 +1,5 @@
 import httpx
+import overpass
 
 from solo_api.http import DEFAULT_TIMEOUT, USER_AGENT
 from solo_api.models import AttractionSummary
@@ -6,6 +7,7 @@ from solo_api.models import AttractionSummary
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 WIKIMEDIA_SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
 ATTRACTION_TIMEOUT = httpx.Timeout(12.0, connect=4.0)
+OVERPASS_TIMEOUT_SECONDS = 12
 
 
 class AttractionLookupError(Exception):
@@ -24,6 +26,23 @@ def _category(tags: dict) -> str:
 
 
 def fetch_wikimedia_summary(city: str) -> str | None:
+    payload = fetch_wikimedia_page_summary(city)
+    extract = payload.get("extract")
+    return extract if isinstance(extract, str) and extract else None
+
+
+def fetch_wikimedia_image(city: str) -> str | None:
+    payload = fetch_wikimedia_page_summary(city)
+    original_image = payload.get("originalimage")
+    if isinstance(original_image, dict) and isinstance(original_image.get("source"), str):
+        return original_image["source"]
+    thumbnail = payload.get("thumbnail")
+    if isinstance(thumbnail, dict) and isinstance(thumbnail.get("source"), str):
+        return thumbnail["source"]
+    return None
+
+
+def fetch_wikimedia_page_summary(city: str) -> dict:
     try:
         response = httpx.get(
             WIKIMEDIA_SUMMARY_URL.format(title=city.replace(" ", "_")),
@@ -32,10 +51,10 @@ def fetch_wikimedia_summary(city: str) -> str | None:
         )
         response.raise_for_status()
     except httpx.HTTPError:
-        return None
+        return {}
 
-    extract = response.json().get("extract")
-    return extract if isinstance(extract, str) and extract else None
+    payload = response.json()
+    return payload if isinstance(payload, dict) else {}
 
 
 def _overpass_query(
@@ -69,6 +88,57 @@ def _post_overpass_query(query: str) -> httpx.Response:
         headers={"User-Agent": USER_AGENT},
         timeout=ATTRACTION_TIMEOUT,
     )
+
+
+def _overpass_api() -> overpass.API:
+    return overpass.API(user_agent=USER_AGENT, timeout=OVERPASS_TIMEOUT_SECONDS)
+
+
+def count_attractions(
+    latitude: float,
+    longitude: float,
+    radius_m: int = 2500,
+) -> int:
+    query = _overpass_query(
+        latitude=latitude,
+        longitude=longitude,
+        radius_m=radius_m,
+        include_historic=True,
+    )
+    try:
+        response = _overpass_api().get(query, responseformat="json", build=False)
+    except overpass.TimeoutError:
+        try:
+            response = _overpass_api().get(
+                _overpass_query(
+                    latitude=latitude,
+                    longitude=longitude,
+                    radius_m=radius_m,
+                    include_historic=False,
+                ),
+                responseformat="json",
+                build=False,
+            )
+        except Exception as retry_error:
+            raise AttractionLookupError(
+                service="OpenStreetMap",
+                message="OpenStreetMap timed out while counting nearby attractions.",
+                original_error=retry_error,
+            ) from retry_error
+    except Exception as error:
+        raise AttractionLookupError(
+            service="OpenStreetMap",
+            message="OpenStreetMap failed while counting nearby attractions.",
+            original_error=error,
+        ) from error
+
+    if not isinstance(response, dict):
+        return 0
+    if isinstance(response.get("features"), list):
+        return len(response["features"])
+    if isinstance(response.get("elements"), list):
+        return len(response["elements"])
+    return 0
 
 
 def fetch_attractions(

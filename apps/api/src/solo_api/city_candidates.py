@@ -142,7 +142,7 @@ def search_city_candidates(
     }
     if uses_native_radius:
         params["location"] = _location(latitude, longitude)
-        params["radius"] = 100
+        params["radius"] = radius_km
         params["distanceUnit"] = "KM"
     else:
         params["countryIds"] = region if _is_country_filter(region) else EUROPE_COUNTRY_IDS

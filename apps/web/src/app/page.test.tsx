@@ -28,6 +28,17 @@ describe("Solo homepage", () => {
                     attractionScore: 25,
                     popularityScore: 19,
                     affordabilityScore: 12,
+                    airQualityScore: 8,
+                  },
+                  attraction_count: 7,
+                  image_url: "https://images.example/lisbon.jpg",
+                  air_quality: {
+                    pm25: 8,
+                    pm10: 14,
+                    no2: null,
+                    summary: "Good air quality.",
+                    source: "OpenAQ",
+                    status: "available",
                   },
                   reasons: ["Matches your preference for warmer destinations."],
                   caveats: [],
@@ -57,6 +68,17 @@ describe("Solo homepage", () => {
                     attractionScore: 25,
                     popularityScore: 20,
                     affordabilityScore: 11,
+                    airQualityScore: 6,
+                  },
+                  attraction_count: 8,
+                  image_url: "https://images.example/copenhagen.jpg",
+                  air_quality: {
+                    pm25: 12,
+                    pm10: 20,
+                    no2: null,
+                    summary: "Fair air quality.",
+                    source: "OpenAQ",
+                    status: "available",
                   },
                   reasons: ["Long daylight fits this summer window."],
                   caveats: [],
@@ -116,6 +138,12 @@ describe("Solo homepage", () => {
     expect(screen.getByText("Lisbon 91")).toBeInTheDocument();
     expect(screen.getByLabelText("Lisbon city marker")).toBeInTheDocument();
     expect(screen.getByLabelText("Score breakdown for Lisbon")).toHaveTextContent("Climate: 35");
+    expect(screen.getByLabelText("Score breakdown for Lisbon")).toHaveTextContent("Air: 8");
+    expect(screen.getByText("7 attractions nearby")).toBeInTheDocument();
+    expect(screen.getByText("Good air quality.")).toBeInTheDocument();
+    expect(screen.getByText("Lisbon, Portugal").closest(".card")).toHaveStyle({
+      backgroundImage: "linear-gradient(rgba(23, 33, 29, 0.72), rgba(23, 33, 29, 0.72)), url(https://images.example/lisbon.jpg)",
+    });
   });
 
   it("sends radius and population filters with recommendation requests", async () => {
@@ -132,7 +160,7 @@ describe("Solo homepage", () => {
 
     render(<Page />);
 
-    fireEvent.change(screen.getByLabelText("Search radius"), { target: { value: "900" } });
+    fireEvent.change(screen.getByRole("slider", { name: "Search radius" }), { target: { value: "900" } });
     fireEvent.change(screen.getByLabelText("Minimum population"), {
       target: { value: "500000" },
     });

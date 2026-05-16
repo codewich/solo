@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115.0",
   "httpx>=0.28.0",
+  "overpass>=0.8.2,<0.9",
   "pydantic>=2.10.0",
   "uvicorn[standard]>=0.34.0"
 ]

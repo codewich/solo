@@ -55,11 +55,32 @@ export type Recommendation = {
     attractionScore: number;
     popularityScore: number;
     affordabilityScore: number;
+    airQualityScore?: number;
   } | null;
+  attraction_count?: number;
+  attractionCount?: number;
   best_months_to_visit?: string[];
   top_attractions?: string[];
   estimated_daily_budget?: number | null;
   summary?: string | null;
+  image_url?: string | null;
+  imageUrl?: string | null;
+  air_quality?: {
+    pm25?: number | null;
+    pm10?: number | null;
+    no2?: number | null;
+    summary: string;
+    source: string;
+    status: "available" | "unavailable";
+  } | null;
+  airQuality?: {
+    pm25?: number | null;
+    pm10?: number | null;
+    no2?: number | null;
+    summary: string;
+    source: string;
+    status: "available" | "unavailable";
+  } | null;
   warning?: string | null;
 };
 
