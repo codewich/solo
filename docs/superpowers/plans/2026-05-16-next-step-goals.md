@@ -27,8 +27,8 @@
 - Create `apps/web/src/lib/travel-pacing.ts`: calculate inferred pace from date-range duration.
 - Create `apps/web/src/lib/travel-pacing.test.ts`: unit-test pace calculation boundaries.
 - Modify `apps/web/src/app/destination-map.tsx`: accept home coordinates, show home pin in red, and hide destination pins until a saved range is selected.
-- Modify `apps/web/src/app/page.tsx`: clear saved draft date highlights, paginate long range lists, tie pace to selected date range, lock/edit home city, autocomplete and geocode home city, fetch destination intelligence.
-- Modify `apps/web/src/app/page.test.tsx`: cover clearing saved draft highlights, pagination, inferred pace, home-city editing, autocomplete/geocoding, red home pin behavior, and destination intelligence rendering.
+- Modify `apps/web/src/app/page.tsx`: clear saved draft date highlights, add an Add Range cancel action, paginate long range lists, tie pace to selected date range, lock/edit home city, autocomplete and geocode home city, fetch destination intelligence.
+- Modify `apps/web/src/app/page.test.tsx`: cover clearing saved draft highlights, canceling draft range selection, pagination, inferred pace, home-city editing, autocomplete/geocoding, red home pin behavior, and destination intelligence rendering.
 - Modify `apps/api/pyproject.toml`: add `httpx`.
 - Modify `apps/api/src/solo_api/models.py`: add destination intelligence request/response models and coordinate/cost models.
 - Create `apps/api/src/solo_api/http.py`: shared timeout-based HTTP client factory.
@@ -531,7 +531,7 @@ git commit -m "feat: infer travel pace from date ranges"
 
 ---
 
-### Task 3: Clear Saved Range Highlight And Paginate Long Range Lists
+### Task 3: Clear Saved Range Highlight, Add Cancel, And Paginate Long Range Lists
 
 **Files:**
 - Modify: `apps/web/src/app/page.tsx`
@@ -556,6 +556,22 @@ it("clears the draft date highlight after a range is saved", () => {
   expect(screen.getByRole("button", { name: "Add range" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "20 May 2026" })).not.toHaveClass("selected");
   expect(screen.getByRole("button", { name: "26 May 2026" })).not.toHaveClass("selected");
+});
+
+it("lets the user cancel adding a range", () => {
+  render(<Page />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Add range" }));
+  fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
+
+  expect(screen.getByText("Draft range: 20 May-20 May 2026")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "20 May 2026" })).toHaveClass("selected");
+
+  fireEvent.click(screen.getByRole("button", { name: "Cancel range" }));
+
+  expect(screen.queryByText(/Draft range:/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Add range" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "20 May 2026" })).not.toHaveClass("selected");
 });
 
 it("paginates candidate ranges when the list grows", () => {
@@ -587,7 +603,7 @@ Run:
 corepack pnpm --filter @solo/web test -- --run src/app/page.test.tsx
 ```
 
-Expected: FAIL because the saved date range remains highlighted and range pagination controls do not exist.
+Expected: FAIL because the saved date range remains highlighted, there is no cancel action, and range pagination controls do not exist.
 
 - [ ] **Step 3: Add pagination state and derived list**
 
@@ -677,7 +693,51 @@ const isSelected =
 
 Keep the calendar visible at all times. The selected range should appear only while the user is actively drafting a new range; once the range is saved and `draftRange` returns to `null`, no date-range highlight should remain on the calendar.
 
-- [ ] **Step 6: Render the paginated range list**
+- [ ] **Step 6: Add a cancel action for range drafting**
+
+In `apps/web/src/app/page.tsx`, add:
+
+```ts
+function handleCancelRangeDraft() {
+  setIsAddingRange(false);
+  setDraftAnchorDate(null);
+  setDraftRange(null);
+  setIsDraftComplete(false);
+}
+```
+
+Render the range action buttons as a small button group:
+
+```tsx
+<div className="range-create-actions">
+  {isAddingRange ? (
+    <button className="secondary-button" type="button" onClick={handleCancelRangeDraft}>
+      Cancel range
+    </button>
+  ) : null}
+  <button
+    className="secondary-button"
+    type="button"
+    disabled={isAddingRange && !isDraftComplete}
+    onClick={handleRangeButtonClick}
+  >
+    {isAddingRange ? "Save range" : "Add range"}
+  </button>
+</div>
+```
+
+Add `.range-create-actions` to `apps/web/src/app/globals.css` if Task 1 has not already added it:
+
+```css
+.range-create-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+```
+
+- [ ] **Step 7: Render the paginated range list**
 
 Change:
 
@@ -721,7 +781,7 @@ Below the range list, render:
 ) : null}
 ```
 
-- [ ] **Step 7: Run tests**
+- [ ] **Step 8: Run tests**
 
 Run:
 
@@ -731,11 +791,11 @@ corepack pnpm --filter @solo/web test -- --run src/app/page.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```powershell
 git add apps/web/src/app/page.tsx apps/web/src/app/page.test.tsx
-git commit -m "feat: clear saved range highlight and paginate ranges"
+git commit -m "feat: refine range drafting controls"
 ```
 
 ---
@@ -2476,6 +2536,7 @@ Open `http://localhost:3000` and verify:
 
 - The calendar remains visible before and after saving a range.
 - Saving a range clears the previous draft date highlight.
+- Canceling an in-progress range draft clears the draft and returns to the `Add range` state.
 - Adding more than six ranges shows `Previous ranges` and `Next ranges`.
 - Home city input is disabled until the edit icon is clicked.
 - Typing `Lon` shows London autocomplete; selecting it locks the input again.
@@ -2496,7 +2557,7 @@ git commit -m "docs: document destination data providers"
 ## Self-Review
 
 **Spec coverage:**  
-The plan covers date-range-driven pace in Task 2, range pagination and clearing the saved draft range highlight in Task 3, responsive Tailwind/shadcn-style styling in Task 1, immutable editable home city with autocomplete/geolocation in Tasks 4 and 5, red home pin and destination pin gating in Task 5, Open-Meteo weather in Tasks 4 and 7, Overpass/Wikimedia-ready attractions through Task 7, Amadeus hotel prices in Task 7, cost-of-living abstraction in Task 7, and normalized aggregation in Tasks 6 through 9.
+The plan covers date-range-driven pace in Task 2, range pagination, canceling range drafts, and clearing the saved draft range highlight in Task 3, responsive Tailwind/shadcn-style styling in Task 1, immutable editable home city with autocomplete/geolocation in Tasks 4 and 5, red home pin and destination pin gating in Task 5, Open-Meteo weather in Tasks 4 and 7, Overpass/Wikimedia-ready attractions through Task 7, Amadeus hotel prices in Task 7, cost-of-living abstraction in Task 7, and normalized aggregation in Tasks 6 through 9.
 
 **Placeholder scan:**  
 No task uses `TBD`, empty implementation notes, or unbounded "add tests" instructions. Each test, implementation, command, and expected result is spelled out.
