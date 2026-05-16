@@ -332,18 +332,6 @@ select {
   background: var(--field);
 }
 
-.home-city-control {
-  display: grid;
-  gap: 8px;
-}
-
-.home-city-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px;
-  gap: 8px;
-  align-items: end;
-}
-
 .autocomplete-list {
   display: grid;
   gap: 4px;
@@ -486,6 +474,40 @@ select {
 
 .maplibregl-marker {
   z-index: 2;
+}
+
+.city-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transform: translateY(-8px);
+  pointer-events: auto;
+}
+
+.city-marker-dot {
+  width: 13px;
+  height: 13px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 4px 10px rgba(31, 59, 49, 0.28);
+}
+
+.city-marker-home .city-marker-dot {
+  background: var(--home-pin);
+}
+
+.city-marker-label {
+  border: 1px solid rgba(12, 55, 42, 0.2);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 8px 20px rgba(31, 59, 49, 0.2);
+  font-size: 0.75rem;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .map-chip {

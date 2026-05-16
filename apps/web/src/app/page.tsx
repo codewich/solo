@@ -1,11 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DestinationMap } from "./destination-map";
-import { fetchRecommendations } from "@/lib/api";
+import { fetchDestinationIntelligence, fetchRecommendations } from "@/lib/api";
 import { formatWindowLabel } from "@/lib/date-windows";
 import { inferPaceFromRange } from "@/lib/travel-pacing";
-import type { RecommendationGroup, TravelWindow } from "@/lib/types";
+import type {
+  DestinationIntelligence,
+  HomeLocation,
+  RecommendationGroup,
+  TravelWindow,
+} from "@/lib/types";
 
 type PlanningWindow = TravelWindow & {
   dates: string;
@@ -60,26 +65,7 @@ const initialTravelWindows: PlanningWindow[] = [
   },
 ];
 
-const staticRecommendations = [
-  {
-    city: "Lisbon",
-    country: "Portugal",
-    score: 92,
-    why: "Warm, food-led, walkable, and flexible enough for a wandering pace.",
-  },
-  {
-    city: "Seville",
-    country: "Spain",
-    score: 89,
-    why: "Excellent spring energy, architecture, late dinners, and slower afternoons.",
-  },
-  {
-    city: "Porto",
-    country: "Portugal",
-    score: 84,
-    why: "Compact, atmospheric, good for low-pressure discovery and food.",
-  },
-];
+const rangePageSize = 6;
 
 const monthTitle = new Intl.DateTimeFormat("en-GB", {
   month: "long",
@@ -154,41 +140,80 @@ function linkedHolidayForRange(range: DraftRange): string | null {
   return null;
 }
 
+function planningWindowFromDraft(range: DraftRange, existingWindows: PlanningWindow[]): PlanningWindow {
+  const dates = formatWindowLabel(range.start_date, range.end_date);
+  const baseId = `range-${Date.now()}`;
+  const existingIds = new Set(existingWindows.map((window) => window.id));
+  let id = baseId;
+  let suffix = 2;
+
+  while (existingIds.has(id)) {
+    id = `${baseId}-${suffix}`;
+    suffix += 1;
+  }
+
+  return {
+    id,
+    label: dates,
+    dates,
+    start_date: range.start_date,
+    end_date: range.end_date,
+    linked_holiday: linkedHolidayForRange(range),
+    status: "candidate",
+    notes: "New candidate range.",
+  };
+}
+
 export default function Page() {
-  const [homeCity, setHomeCity] = useState("London");
+  const homeLocation: HomeLocation = {
+    city: "London",
+    country: "United Kingdom",
+    admin1: "England",
+    latitude: 51.5072,
+    longitude: -0.1276,
+  };
   const [travelWindows, setTravelWindows] = useState(initialTravelWindows);
-  const [selectedTravelWindowId, setSelectedTravelWindowId] = useState(initialTravelWindows[0].id);
+  const [selectedTravelWindowId, setSelectedTravelWindowId] = useState<string | null>(null);
   const [visibleCalendarMonth, setVisibleCalendarMonth] = useState({ year: 2026, monthIndex: 4 });
   const [isAddingRange, setIsAddingRange] = useState(false);
   const [draftRange, setDraftRange] = useState<DraftRange | null>(null);
   const [draftAnchorDate, setDraftAnchorDate] = useState<string | null>(null);
   const [isDraftComplete, setIsDraftComplete] = useState(false);
+  const [rangePageIndex, setRangePageIndex] = useState(0);
   const [editingWindowId, setEditingWindowId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState("");
   const [groups, setGroups] = useState<RecommendationGroup[]>([]);
+  const [destinationIntelligence, setDestinationIntelligence] = useState<
+    Record<string, DestinationIntelligence>
+  >({});
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
 
-  const selectedTravelWindow =
-    travelWindows.find((window) => window.id === selectedTravelWindowId) ?? travelWindows[0];
-  const pace = inferPaceFromRange(selectedTravelWindow);
-  const activeGroup =
-    groups.find((group) => group.travel_window.id === selectedTravelWindowId) ?? groups[0];
+  const homeCity = homeLocation.city;
+  const selectedTravelWindow = selectedTravelWindowId
+    ? travelWindows.find((window) => window.id === selectedTravelWindowId) ?? null
+    : null;
+  const rangePageCount = Math.max(1, Math.ceil(travelWindows.length / rangePageSize));
+  const visibleTravelWindows = travelWindows.slice(
+    rangePageIndex * rangePageSize,
+    rangePageIndex * rangePageSize + rangePageSize,
+  );
+  const activeRange = draftRange ?? selectedTravelWindow;
+  const pace = activeRange ? inferPaceFromRange(activeRange) : null;
+  const activeGroup = selectedTravelWindowId
+    ? groups.find((group) => group.travel_window.id === selectedTravelWindowId)
+    : undefined;
   const activeRecommendations = activeGroup?.recommendations ?? [];
-  const mapDestinations =
-    activeRecommendations.length > 0
-      ? activeRecommendations.slice(0, 5).map((item) => ({
-          city: item.destination.city,
-          country: item.destination.country,
-          score: item.score,
-          summary: item.reasons[0],
-        }))
-      : staticRecommendations.map((item) => ({
-          city: item.city,
-          country: item.country,
-          score: item.score,
-          summary: item.why,
-        }));
-  const visibleCalendarRange = draftRange ?? selectedTravelWindow;
+  const mapDestinations = useMemo(
+    () =>
+      activeRecommendations.slice(0, 5).map((item) => ({
+            city: item.destination.city,
+            country: item.destination.country,
+            score: item.score,
+            summary: item.reasons[0],
+          })),
+    [activeRecommendations],
+  );
+  const visibleCalendarRange = activeRange;
   const visibleCalendarDates = buildCalendarDates(
     visibleCalendarMonth.year,
     visibleCalendarMonth.monthIndex,
@@ -198,6 +223,10 @@ export default function Page() {
     visibleCalendarMonth.monthIndex,
   );
   const todayIsoDate = toIsoDate(new Date());
+
+  useEffect(() => {
+    setRangePageIndex((currentPage) => Math.min(currentPage, rangePageCount - 1));
+  }, [rangePageCount]);
 
   function shiftVisibleMonth(offset: number) {
     setVisibleCalendarMonth((currentMonth) => {
@@ -220,23 +249,41 @@ export default function Page() {
   }
 
   async function handleFindDestinations() {
+    const isSavingDraftRange = draftRange !== null && isDraftComplete;
+    const targetWindow = isSavingDraftRange
+      ? planningWindowFromDraft(draftRange, travelWindows)
+      : selectedTravelWindow;
+
+    if (!targetWindow) {
+      return;
+    }
+
+    if (isSavingDraftRange) {
+      setTravelWindows((currentWindows) => [...currentWindows, targetWindow]);
+      setSelectedTravelWindowId(targetWindow.id);
+      setDraftAnchorDate(null);
+      setDraftRange(null);
+      setIsDraftComplete(false);
+      setIsAddingRange(false);
+    }
+
     setStatus("loading");
     try {
       const results = await fetchRecommendations({
         home_city: homeCity,
-        travel_windows: travelWindows.map(
-          ({ id, label, start_date, end_date, linked_holiday, status, notes }) => ({
-            id,
-            label,
-            start_date,
-            end_date,
-            linked_holiday,
-            status,
-            notes,
-          }),
-        ),
+        travel_windows: [
+          {
+            id: targetWindow.id,
+            label: targetWindow.label,
+            start_date: targetWindow.start_date,
+            end_date: targetWindow.end_date,
+            linked_holiday: targetWindow.linked_holiday,
+            status: targetWindow.status,
+            notes: targetWindow.notes,
+          },
+        ],
         preferences: {
-          pace,
+          pace: inferPaceFromRange(targetWindow),
           climate: "warm",
           budget_sensitivity: 3,
           popularity: "mix",
@@ -244,7 +291,35 @@ export default function Page() {
         },
         excluded_destination_ids: [],
       });
-      setGroups(results);
+      const activeWindow = results.find((group) => group.travel_window.id === targetWindow.id)
+        ?.travel_window;
+      const activeItems =
+        results.find((group) => group.travel_window.id === targetWindow.id)?.recommendations ?? [];
+      const intelligenceEntries = await Promise.all(
+        activeItems
+          .slice(0, 3)
+          .filter(
+            (item) =>
+              typeof item.destination.latitude === "number" &&
+              typeof item.destination.longitude === "number",
+          )
+          .map(async (item) => {
+            const intelligence = await fetchDestinationIntelligence({
+              destination_city: item.destination.city,
+              country: item.destination.country,
+              latitude: item.destination.latitude as number,
+              longitude: item.destination.longitude as number,
+              start_date: activeWindow?.start_date ?? targetWindow.start_date,
+              end_date: activeWindow?.end_date ?? targetWindow.end_date,
+            });
+            return [item.destination.id, intelligence] as const;
+          }),
+      );
+      setDestinationIntelligence(Object.fromEntries(intelligenceEntries));
+      setGroups((currentGroups) => [
+        ...currentGroups.filter((group) => group.travel_window.id !== targetWindow.id),
+        ...results,
+      ]);
       setStatus("ready");
     } catch {
       setStatus("error");
@@ -280,17 +355,7 @@ export default function Page() {
       return;
     }
 
-    const dates = formatWindowLabel(draftRange.start_date, draftRange.end_date);
-    const newWindow: PlanningWindow = {
-      id: `range-${Date.now()}`,
-      label: dates,
-      dates,
-      start_date: draftRange.start_date,
-      end_date: draftRange.end_date,
-      linked_holiday: linkedHolidayForRange(draftRange),
-      status: "candidate",
-      notes: "New candidate range.",
-    };
+    const newWindow = planningWindowFromDraft(draftRange, travelWindows);
 
     setTravelWindows((currentWindows) => [...currentWindows, newWindow]);
     setSelectedTravelWindowId(newWindow.id);
@@ -298,6 +363,13 @@ export default function Page() {
     setDraftRange(null);
     setIsDraftComplete(false);
     setIsAddingRange(false);
+  }
+
+  function handleCancelRange() {
+    setIsAddingRange(false);
+    setDraftAnchorDate(null);
+    setDraftRange(null);
+    setIsDraftComplete(false);
   }
 
   function handleStartRename(window: PlanningWindow) {
@@ -340,8 +412,11 @@ export default function Page() {
 
     const nextWindows = travelWindows.filter((window) => window.id !== id);
     setTravelWindows(nextWindows);
+    setRangePageIndex((currentPage) =>
+      Math.min(currentPage, Math.max(0, Math.ceil(nextWindows.length / rangePageSize) - 1)),
+    );
     if (selectedTravelWindowId === id) {
-      setSelectedTravelWindowId(nextWindows[0].id);
+      setSelectedTravelWindowId(null);
     }
     if (editingWindowId === id) {
       setEditingWindowId(null);
@@ -374,11 +449,6 @@ export default function Page() {
             </p>
           </div>
 
-          <label>
-            Home city
-            <input value={homeCity} onChange={(event) => setHomeCity(event.target.value)} />
-          </label>
-
           <div className="card stack">
             <div className="row">
               <div className="month-controls">
@@ -410,11 +480,13 @@ export default function Page() {
               ))}
               {visibleCalendarDates.map(({ day, isoDate, label, isCurrentMonth }, index) => {
                 const isHoliday = gbHolidayDates.has(isoDate);
-                const isSelected = isWithinRange(
-                  isoDate,
-                  visibleCalendarRange.start_date,
-                  visibleCalendarRange.end_date,
-                );
+                const isSelected =
+                  visibleCalendarRange !== null &&
+                  isWithinRange(
+                    isoDate,
+                    visibleCalendarRange.start_date,
+                    visibleCalendarRange.end_date,
+                  );
                 const isToday = isoDate === todayIsoDate;
                 return (
                   <button
@@ -446,18 +518,25 @@ export default function Page() {
           <div className="card stack">
             <div className="row">
               <strong>Candidate travel windows</strong>
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={isAddingRange && !isDraftComplete}
-                onClick={handleRangeButtonClick}
-              >
-                {isAddingRange ? "Save range" : "Add range"}
-              </button>
+              <div className="range-create-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={isAddingRange && !isDraftComplete}
+                  onClick={handleRangeButtonClick}
+                >
+                  {isAddingRange ? "Save draft range" : "Add range"}
+                </button>
+                {isAddingRange ? (
+                  <button className="secondary-button" type="button" onClick={handleCancelRange}>
+                    Cancel range
+                  </button>
+                ) : null}
+              </div>
             </div>
             <span className="score">{travelWindows.length} ranges</span>
             <div className="range-list" aria-label="Candidate range list">
-              {travelWindows.map((window) => {
+              {visibleTravelWindows.map((window) => {
                 const isSelected = window.id === selectedTravelWindowId;
                 return (
                   <div className="range-item" key={window.id}>
@@ -529,35 +608,80 @@ export default function Page() {
                 );
               })}
             </div>
+            {rangePageCount > 1 ? (
+              <div className="pagination-controls">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={rangePageIndex === 0}
+                  onClick={() => setRangePageIndex((currentPage) => Math.max(0, currentPage - 1))}
+                >
+                  Previous ranges
+                </button>
+                <span className="muted">
+                  Page {rangePageIndex + 1} of {rangePageCount}
+                </span>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={rangePageIndex >= rangePageCount - 1}
+                  onClick={() =>
+                    setRangePageIndex((currentPage) =>
+                      Math.min(rangePageCount - 1, currentPage + 1),
+                    )
+                  }
+                >
+                  Next ranges
+                </button>
+              </div>
+            ) : null}
           </div>
 
           <div className="card stack">
             <strong>Preference lens</strong>
             <div className="row">
-              <span className="pill">{pace[0].toUpperCase() + pace.slice(1)} pace</span>
+              <span className="pill">
+                {pace ? `${pace[0].toUpperCase() + pace.slice(1)} pace` : "Choose a range"}
+              </span>
               <span className="pill">Warm</span>
               <span className="pill">Food</span>
             </div>
             <p className="muted">Excluded: Paris, Amsterdam, Barcelona</p>
-            <button className="primary-button" type="button" onClick={handleFindDestinations}>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={!activeRange || status === "loading"}
+              onClick={handleFindDestinations}
+            >
               {status === "loading" ? "Finding..." : "Find destinations"}
             </button>
             {status === "error" ? <p role="alert">Could not load recommendations.</p> : null}
           </div>
         </aside>
 
-        <DestinationMap destinations={mapDestinations} homeCity={homeCity} />
+        <DestinationMap
+          destinations={mapDestinations}
+          homeCity={homeCity}
+          homeCoordinates={[homeLocation.longitude, homeLocation.latitude]}
+          showDestinationPins={activeRecommendations.length > 0}
+        />
 
         <aside className="panel right-panel stack">
           <div>
             <h2>Best matches</h2>
-            <p className="muted">Grouped by {selectedTravelWindow.label}.</p>
+            <p className="muted">
+              {selectedTravelWindow
+                ? `Grouped by ${selectedTravelWindow.label}.`
+                : "Select a date range to find matches."}
+            </p>
           </div>
 
-          {(activeRecommendations.length > 0 ? activeRecommendations : staticRecommendations).map((item) => {
-            const city = "destination" in item ? item.destination.city : item.city;
-            const country = "destination" in item ? item.destination.country : item.country;
-            const why = "reasons" in item ? item.reasons[0] : item.why;
+          {activeRecommendations.map((item) => {
+            const city = item.destination.city;
+            const country = item.destination.country;
+            const why = item.reasons[0];
+            const id = item.destination.id;
+            const intelligence = destinationIntelligence[id];
 
             return (
             <div className="card" key={city}>
@@ -573,6 +697,29 @@ export default function Page() {
                 <span className="pill">solo-friendly</span>
                 <span className="pill">walkable</span>
               </div>
+              {intelligence ? (
+                <div className="destination-intelligence">
+                  {intelligence.climate.average_temperature_c !== null ? (
+                    <span className="pill">
+                      {intelligence.climate.average_temperature_c}C average
+                    </span>
+                  ) : null}
+                  {intelligence.attractions[0] ? (
+                    <span className="pill">{intelligence.attractions[0].name}</span>
+                  ) : null}
+                  {intelligence.hotels.status === "available" &&
+                  intelligence.hotels.currency &&
+                  intelligence.hotels.median_nightly_price !== null ? (
+                    <span className="pill">
+                      {intelligence.hotels.currency}{" "}
+                      {Math.round(intelligence.hotels.median_nightly_price)} median hotel
+                    </span>
+                  ) : (
+                    <span className="pill">Hotel prices unavailable</span>
+                  )}
+                  <p className="muted">{intelligence.cost_of_living.summary}</p>
+                </div>
+              ) : null}
             </div>
             );
           })}

@@ -13,9 +13,33 @@ type MapDestination = {
 type DestinationMapProps = {
   destinations: MapDestination[];
   homeCity: string;
+  homeCoordinates: [number, number];
+  showDestinationPins: boolean;
 };
 
-const defaultMapStyle = "https://demotiles.maplibre.org/style.json";
+const defaultMapStyle = {
+  version: 8 as const,
+  glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+  sources: {
+    osm: {
+      type: "raster" as const,
+      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      attribution: "OpenStreetMap contributors",
+    },
+  },
+  layers: [
+    {
+      id: "osm-raster",
+      type: "raster" as const,
+      source: "osm",
+    },
+  ],
+};
+
+export function buildDefaultMapStyle() {
+  return defaultMapStyle;
+}
 
 const cityCoordinates: Record<string, [number, number]> = {
   Copenhagen: [12.5683, 55.6761],
@@ -25,7 +49,29 @@ const cityCoordinates: Record<string, [number, number]> = {
   Seville: [-5.9845, 37.3891],
 };
 
-export function DestinationMap({ destinations, homeCity }: DestinationMapProps) {
+function createCityMarkerElement(city: string, variant: "home" | "destination"): HTMLDivElement {
+  const marker = document.createElement("div");
+  marker.className = `city-marker city-marker-${variant}`;
+  marker.setAttribute("aria-label", `${city} city marker`);
+
+  const dot = document.createElement("span");
+  dot.className = "city-marker-dot";
+  dot.setAttribute("aria-hidden", "true");
+
+  const label = document.createElement("span");
+  label.className = "city-marker-label";
+  label.textContent = city;
+
+  marker.append(dot, label);
+  return marker;
+}
+
+export function DestinationMap({
+  destinations,
+  homeCity,
+  homeCoordinates,
+  showDestinationPins,
+}: DestinationMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
   const markerRefs = useRef<import("maplibre-gl").Marker[]>([]);
@@ -66,9 +112,17 @@ export function DestinationMap({ destinations, homeCity }: DestinationMapProps) 
         style: mapStyle,
         zoom: 4,
       });
-      mapRef.current.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+      mapRef.current.addControl(
+        new maplibregl.NavigationControl({ showCompass: false }),
+        "top-right",
+      );
       mapRef.current.once("load", () => {
-        mapRef.current?.resize();
+        const map = mapRef.current;
+        if (!map) {
+          return;
+        }
+
+        map.resize();
         setIsMapReady(true);
       });
       resizeObserverRef.current = new ResizeObserver(() => mapRef.current?.resize());
@@ -85,7 +139,6 @@ export function DestinationMap({ destinations, homeCity }: DestinationMapProps) 
       resizeObserverRef.current = null;
       mapRef.current?.remove();
       mapRef.current = null;
-      setIsMapReady(false);
     };
   }, [mapStyle]);
 
@@ -106,24 +159,29 @@ export function DestinationMap({ destinations, homeCity }: DestinationMapProps) 
       markerRefs.current.forEach((marker) => marker.remove());
       markerRefs.current = [];
 
-      const homeCoordinates = cityCoordinates[homeCity] ?? cityCoordinates.London;
-      const homeMarker = new maplibregl.Marker({ color: "#18221d" })
+      const homeMarker = new maplibregl.Marker({
+        element: createCityMarkerElement(homeCity, "home"),
+      })
         .setLngLat(homeCoordinates)
         .setPopup(new maplibregl.Popup({ offset: 18 }).setText(`${homeCity} home base`))
         .addTo(map);
       markerRefs.current.push(homeMarker);
 
-      visibleDestinations.forEach((destination) => {
-        const marker = new maplibregl.Marker({ color: "#24745a" })
-          .setLngLat(destination.coordinates)
-          .setPopup(
-            new maplibregl.Popup({ offset: 18 }).setText(
-              `${destination.city}, ${destination.country}: ${destination.score}. ${destination.summary}`,
-            ),
-          )
-          .addTo(map);
-        markerRefs.current.push(marker);
-      });
+      if (showDestinationPins) {
+        visibleDestinations.forEach((destination) => {
+          const marker = new maplibregl.Marker({
+            element: createCityMarkerElement(destination.city, "destination"),
+          })
+            .setLngLat(destination.coordinates)
+            .setPopup(
+              new maplibregl.Popup({ offset: 18 }).setText(
+                `${destination.city}, ${destination.country}: ${destination.score}. ${destination.summary}`,
+              ),
+            )
+            .addTo(map);
+          markerRefs.current.push(marker);
+        });
+      }
     }
 
     renderMarkers();
@@ -131,22 +189,25 @@ export function DestinationMap({ destinations, homeCity }: DestinationMapProps) 
     return () => {
       isMounted = false;
     };
-  }, [homeCity, isMapReady, visibleDestinations]);
+  }, [homeCity, homeCoordinates, isMapReady, showDestinationPins, visibleDestinations]);
 
   return (
     <section className="map real-map" aria-label="Europe destination map">
       <div className="map-canvas" data-testid="maplibre-map" ref={containerRef} />
       <div className="map-overlay-pins" aria-label="Visible destination markers">
-        <div className="map-chip map-chip-home">
-          {homeCity}
-          <span>home base</span>
-        </div>
-        {visibleDestinations.map((destination) => (
-          <div className="map-chip" key={destination.city}>
-            {destination.city} {destination.score}
-            <span>{destination.summary}</span>
-          </div>
-        ))}
+        <div className="map-chip map-chip-home">{homeCity} home base</div>
+        {showDestinationPins
+          ? visibleDestinations.map((destination) => (
+              <div
+                className="map-chip"
+                key={destination.city}
+                aria-label={`${destination.city} city marker`}
+              >
+                {destination.city} {destination.score}
+                <span>{destination.summary}</span>
+              </div>
+            ))
+          : null}
       </div>
     </section>
   );

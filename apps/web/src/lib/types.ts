@@ -29,7 +29,14 @@ export type Destination = {
   id: string;
   city: string;
   country: string;
+  timezone?: string | null;
+  latitude?: number;
+  longitude?: number;
+  cost_level?: number;
+  short_stay_score?: number;
+  solo_friendliness?: number;
   tags: string[];
+  seasonal_strengths?: Record<string, number>;
   climate_notes: string;
   caveats: string[];
 };
@@ -40,9 +47,84 @@ export type Recommendation = {
   score: number;
   reasons: string[];
   caveats: string[];
+  score_breakdown?: {
+    climateScore: number;
+    attractionScore: number;
+    popularityScore: number;
+    affordabilityScore: number;
+  } | null;
+  best_months_to_visit?: string[];
+  top_attractions?: string[];
+  estimated_daily_budget?: number | null;
+  summary?: string | null;
+  warning?: string | null;
 };
 
 export type RecommendationGroup = {
   travel_window: TravelWindow;
   recommendations: Recommendation[];
+};
+
+export type Coordinates = {
+  latitude: number;
+  longitude: number;
+};
+
+export type CitySuggestion = Coordinates & {
+  id: string;
+  name: string;
+  country: string;
+  admin1?: string | null;
+  timezone?: string | null;
+};
+
+export type HomeLocation = Coordinates & {
+  city: string;
+  country: string;
+  admin1?: string | null;
+};
+
+export type DestinationIntelligenceRequest = {
+  destination_city: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+  start_date: string;
+  end_date: string;
+};
+
+export type DestinationIntelligence = {
+  destination_city: string;
+  country: string;
+  climate: {
+    average_temperature_c: number | null;
+    precipitation_mm: number | null;
+    sunshine_hours: number | null;
+    summary: string;
+    source: string;
+  };
+  attractions: Array<{
+    name: string;
+    category: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    description?: string | null;
+    source: string;
+  }>;
+  hotels: {
+    average_nightly_price: number | null;
+    median_nightly_price: number | null;
+    currency: string | null;
+    sample_size: number;
+    source: string;
+    status: "available" | "unavailable";
+  };
+  cost_of_living: {
+    currency: string;
+    meal_inexpensive?: number | null;
+    coffee?: number | null;
+    local_transport_ticket?: number | null;
+    summary: string;
+    source: string;
+  };
 };
