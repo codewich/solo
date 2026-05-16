@@ -391,7 +391,7 @@ git commit -m "style: add responsive styling foundation"
 - Modify: `apps/web/src/app/page.tsx`
 - Modify: `apps/web/src/app/page.test.tsx`
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Create `apps/web/src/lib/travel-pacing.test.ts`:
 
@@ -419,7 +419,7 @@ describe("inferPaceFromRange", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -429,7 +429,7 @@ corepack pnpm --filter @solo/web test -- --run src/lib/travel-pacing.test.ts
 
 Expected: FAIL because `apps/web/src/lib/travel-pacing.ts` does not exist.
 
-- [ ] **Step 3: Implement pace inference**
+- [x] **Step 3: Implement pace inference**
 
 Create `apps/web/src/lib/travel-pacing.ts`:
 
@@ -464,7 +464,7 @@ export function inferPaceFromRange(range: DateRange): Pace {
 }
 ```
 
-- [ ] **Step 4: Connect page state to inferred pace**
+- [x] **Step 4: Connect page state to inferred pace**
 
 In `apps/web/src/app/page.tsx`:
 
@@ -492,7 +492,7 @@ Move the `pace` declaration below `selectedTravelWindow`.
 <span className="pill">{pace[0].toUpperCase() + pace.slice(1)} pace</span>
 ```
 
-- [ ] **Step 5: Add page test for pace changing with range duration**
+- [x] **Step 5: Add page test for pace changing with range duration**
 
 Add this test to `apps/web/src/app/page.test.tsx`:
 
@@ -512,7 +512,7 @@ it("infers travel pace from the selected date range", () => {
 });
 ```
 
-- [ ] **Step 6: Run frontend tests**
+- [x] **Step 6: Run frontend tests**
 
 Run:
 
@@ -522,7 +522,7 @@ corepack pnpm --filter @solo/web test -- --run src/lib/travel-pacing.test.ts src
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add apps/web/src/lib/travel-pacing.ts apps/web/src/lib/travel-pacing.test.ts apps/web/src/app/page.tsx apps/web/src/app/page.test.tsx

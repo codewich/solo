@@ -133,6 +133,20 @@ describe("Solo homepage", () => {
     expect(screen.getByRole("button", { name: "28 Aug 2026" })).toBeInTheDocument();
   });
 
+  it("infers travel pace from the selected date range", () => {
+    render(<Page />);
+
+    expect(screen.getByText("Balanced pace")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add range" }));
+    fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
+    fireEvent.click(screen.getByRole("button", { name: "27 May 2026" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save range" }));
+
+    expect(screen.getByText("Wandering pace")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Travel pace")).not.toBeInTheDocument();
+  });
+
   it("keeps calendar draft selection separate from saved ranges", () => {
     render(<Page />);
 

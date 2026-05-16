@@ -4,6 +4,7 @@ import { useState } from "react";
 import { DestinationMap } from "./destination-map";
 import { fetchRecommendations } from "@/lib/api";
 import { formatWindowLabel } from "@/lib/date-windows";
+import { inferPaceFromRange } from "@/lib/travel-pacing";
 import type { RecommendationGroup, TravelWindow } from "@/lib/types";
 
 type PlanningWindow = TravelWindow & {
@@ -155,7 +156,6 @@ function linkedHolidayForRange(range: DraftRange): string | null {
 
 export default function Page() {
   const [homeCity, setHomeCity] = useState("London");
-  const [pace, setPace] = useState<"rushed" | "balanced" | "wandering">("wandering");
   const [travelWindows, setTravelWindows] = useState(initialTravelWindows);
   const [selectedTravelWindowId, setSelectedTravelWindowId] = useState(initialTravelWindows[0].id);
   const [visibleCalendarMonth, setVisibleCalendarMonth] = useState({ year: 2026, monthIndex: 4 });
@@ -170,6 +170,7 @@ export default function Page() {
 
   const selectedTravelWindow =
     travelWindows.find((window) => window.id === selectedTravelWindowId) ?? travelWindows[0];
+  const pace = inferPaceFromRange(selectedTravelWindow);
   const activeGroup =
     groups.find((group) => group.travel_window.id === selectedTravelWindowId) ?? groups[0];
   const activeRecommendations = activeGroup?.recommendations ?? [];
@@ -378,15 +379,6 @@ export default function Page() {
             <input value={homeCity} onChange={(event) => setHomeCity(event.target.value)} />
           </label>
 
-          <label>
-            Travel pace
-            <select value={pace} onChange={(event) => setPace(event.target.value as typeof pace)}>
-              <option value="rushed">Rushed</option>
-              <option value="balanced">Balanced</option>
-              <option value="wandering">Wandering</option>
-            </select>
-          </label>
-
           <div className="card stack">
             <div className="row">
               <div className="month-controls">
@@ -542,7 +534,7 @@ export default function Page() {
           <div className="card stack">
             <strong>Preference lens</strong>
             <div className="row">
-              <span className="pill">{pace[0].toUpperCase() + pace.slice(1)}</span>
+              <span className="pill">{pace[0].toUpperCase() + pace.slice(1)} pace</span>
               <span className="pill">Warm</span>
               <span className="pill">Food</span>
             </div>
