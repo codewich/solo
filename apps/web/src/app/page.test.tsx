@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Toaster } from "@/components/ui/sonner";
 import Page from "./page";
 
 describe("Solo homepage", () => {
@@ -160,7 +161,11 @@ describe("Solo homepage", () => {
 
     render(<Page />);
 
-    fireEvent.change(screen.getByRole("slider", { name: "Search radius" }), { target: { value: "900" } });
+    const radiusSlider = screen.getByRole("slider", { name: "Search radius" });
+    fireEvent.keyDown(radiusSlider, { key: "Home" });
+    Array.from({ length: 8 }).forEach(() => {
+      fireEvent.keyDown(radiusSlider, { key: "ArrowRight" });
+    });
     fireEvent.change(screen.getByLabelText("Minimum population"), {
       target: { value: "500000" },
     });
@@ -180,6 +185,135 @@ describe("Solo homepage", () => {
         candidate_limit: 12,
       }),
     );
+  });
+
+  it("shows a spinner and loading step on the find destinations button", async () => {
+    let resolveRecommendations: (value: {
+      ok: boolean;
+      json: () => Promise<unknown[]>;
+    }) => void = () => {};
+    const recommendationsResponse = new Promise<{
+      ok: boolean;
+      json: () => Promise<unknown[]>;
+    }>((resolve) => {
+      resolveRecommendations = resolve;
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/recommendations")) {
+        return recommendationsResponse;
+      }
+
+      return { ok: true, json: async () => [] };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
+
+    expect(
+      screen.getByRole("button", { name: /Loading list of cities \(1\/9\)/ }),
+    ).toBeDisabled();
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
+
+    resolveRecommendations({
+      ok: true,
+      json: async () => [
+        {
+          travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
+          recommendations: [],
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Find destinations" })).toBeEnabled();
+    });
+  });
+
+  it("shows the recommendation API error message in a top toast", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/recommendations")) {
+          return {
+            ok: false,
+            status: 400,
+            json: async () => ({
+              detail: { message: "GeoDB rejected the city search request." },
+            }),
+          };
+        }
+
+        return { ok: true, json: async () => [] };
+      }),
+    );
+
+    render(
+      <>
+        <Page />
+        <Toaster position="top-center" richColors />
+      </>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("GeoDB rejected the city search request.")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Could not load recommendations.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the calendar visually available while preventing date selection until add range starts", () => {
+    render(<Page />);
+
+    const holiday = screen.getByRole("button", { name: "25 May 2026" });
+    expect(holiday).toBeEnabled();
+    expect(holiday).toHaveAttribute("title", "Spring bank holiday");
+
+    fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
+    expect(screen.queryByText(/Draft range:/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add range" }));
+    fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
+    expect(screen.getByText("Draft range: 20 May-20 May 2026")).toBeInTheDocument();
+  });
+
+  it("advances the destination search progress label while recommendations are pending", async () => {
+    vi.useFakeTimers();
+    const recommendationsResponse = new Promise<{
+      ok: boolean;
+      json: () => Promise<unknown[]>;
+    }>(() => {});
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/recommendations")) {
+        return recommendationsResponse;
+      }
+
+      return { ok: true, json: async () => [] };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
+
+    expect(screen.getByRole("button", { name: /Loading list of cities \(1\/9\)/ })).toBeDisabled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1400);
+    });
+
+    expect(screen.getByRole("button", { name: /Scoring climate fit \(3\/9\)/ })).toBeDisabled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(2200);
+    });
+
+    expect(screen.getByRole("button", { name: /Ranking best matches \(7\/9\)/ })).toBeDisabled();
   });
 
   it("loads destination intelligence for visible recommendations", async () => {

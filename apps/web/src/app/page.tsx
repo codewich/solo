@@ -1,10 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import { Slider } from "@/components/ui/slider";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { DestinationMap } from "./destination-map";
 import { ApiRequestError, fetchDestinationIntelligence, fetchRecommendations } from "@/lib/api";
 import { formatWindowLabel } from "@/lib/date-windows";
 import { inferPaceFromRange } from "@/lib/travel-pacing";
+import { cn } from "@/lib/utils";
+import type { DateRange } from "react-day-picker";
 import type {
   DestinationIntelligence,
   HomeLocation,
@@ -26,13 +45,6 @@ type DraftRange = {
   end_date: string;
 };
 
-type CalendarDate = {
-  day: string;
-  isoDate: string;
-  label: string;
-  isCurrentMonth: boolean;
-};
-
 type IntelligenceError = {
   destinationId: string;
   city: string;
@@ -47,6 +59,20 @@ type DestinationCardProps = {
   shouldLazyLoad: boolean;
   onVisible: () => void;
 };
+
+function Pill({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Badge className={cn("app-pill", className)} variant="outline">
+      {children}
+    </Badge>
+  );
+}
 
 function DestinationCard({
   item,
@@ -87,19 +113,44 @@ function DestinationCard({
   }, [onVisible, shouldLazyLoad]);
 
   return (
-    <div className={`card recommendation-card${imageUrl ? " has-image" : ""}`} key={city} ref={cardRef} style={cardStyle}>
-      <div className="row">
-        <h3>
+    <Card
+      className={cn("card recommendation-card", imageUrl ? "has-image" : "")}
+      key={city}
+      ref={cardRef}
+      style={cardStyle}
+    >
+      <CardHeader className="recommendation-card-header">
+        <CardTitle>
           {city}, {country}
-        </h3>
-        <button
-          className="score score-tooltip"
-          type="button"
-          aria-label={`Score breakdown for ${city}`}
-        >
-          {item.score}
+        </CardTitle>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              className="score"
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Score breakdown for ${city}`}
+            >
+              {item.score}
+              {item.score_breakdown ? (
+                <span className="sr-only">
+                  Climate: {item.score_breakdown.climateScore}
+                  {" "}
+                  Attractions: {item.score_breakdown.attractionScore}
+                  {" "}
+                  Popularity: {item.score_breakdown.popularityScore}
+                  {" "}
+                  Affordability: {item.score_breakdown.affordabilityScore}
+                  {item.score_breakdown.airQualityScore !== undefined
+                    ? ` Air: ${item.score_breakdown.airQualityScore}`
+                    : ""}
+                </span>
+              ) : null}
+            </Button>
+          </TooltipTrigger>
           {item.score_breakdown ? (
-            <span className="score-tooltip-panel" role="tooltip">
+            <TooltipContent className="score-tooltip-panel">
               <span>Climate: {item.score_breakdown.climateScore}</span>
               <span>Attractions: {item.score_breakdown.attractionScore}</span>
               <span>Popularity: {item.score_breakdown.popularityScore}</span>
@@ -107,18 +158,17 @@ function DestinationCard({
               {item.score_breakdown.airQualityScore !== undefined ? (
                 <span>Air: {item.score_breakdown.airQualityScore}</span>
               ) : null}
-            </span>
+            </TooltipContent>
           ) : null}
-        </button>
-      </div>
+        </Tooltip>
+      </CardHeader>
+      <CardContent className="stack">
       <p className="muted">{why}</p>
-      <div className="row">
-        <span className="pill">4 days</span>
-        <span className="pill">solo-friendly</span>
-        <span className="pill">walkable</span>
-        {attractionCount !== undefined ? (
-          <span className="pill">{attractionCount} attractions nearby</span>
-        ) : null}
+      <div className="badge-row">
+        <Pill>4 days</Pill>
+        <Pill>solo-friendly</Pill>
+        <Pill>walkable</Pill>
+        {attractionCount !== undefined ? <Pill>{attractionCount} attractions nearby</Pill> : null}
       </div>
       {airQuality?.summary ? <p className="muted">{airQuality.summary}</p> : null}
       {isIntelligenceLoading ? (
@@ -127,7 +177,7 @@ function DestinationCard({
           className="destination-intelligence-loading"
           role="status"
         >
-          <span className="spinner" aria-hidden="true" />
+          <Spinner aria-hidden="true" />
           <span>Loading intelligence</span>
         </div>
       ) : null}
@@ -135,27 +185,28 @@ function DestinationCard({
         <div className="destination-intelligence">
           {intelligence.climate?.average_temperature_c !== null &&
           intelligence.climate?.average_temperature_c !== undefined ? (
-            <span className="pill">{intelligence.climate.average_temperature_c}C average</span>
+            <Pill>{intelligence.climate.average_temperature_c}C average</Pill>
           ) : null}
           {intelligence.attractions?.[0] ? (
-            <span className="pill">{intelligence.attractions[0].name}</span>
+            <Pill>{intelligence.attractions[0].name}</Pill>
           ) : null}
           {intelligence.hotels?.status === "available" &&
           intelligence.hotels.currency &&
           intelligence.hotels.median_nightly_price !== null ? (
-            <span className="pill">
+            <Pill>
               {intelligence.hotels.currency}{" "}
               {Math.round(intelligence.hotels.median_nightly_price)} median hotel
-            </span>
+            </Pill>
           ) : (
-            <span className="pill">Hotel prices unavailable</span>
+            <Pill>Hotel prices unavailable</Pill>
           )}
           {intelligence.cost_of_living?.summary ? (
             <p className="muted">{intelligence.cost_of_living.summary}</p>
           ) : null}
         </div>
       ) : null}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -193,19 +244,18 @@ const initialTravelWindows: PlanningWindow[] = [
 ];
 
 const rangePageSize = 6;
-
-const monthTitle = new Intl.DateTimeFormat("en-GB", {
-  month: "long",
-  timeZone: "UTC",
-  year: "numeric",
-});
-
-const dayLabel = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-  year: "numeric",
-});
+const emptyRecommendations: Recommendation[] = [];
+const searchProgressSteps = [
+  { label: "Loading list of cities (1/9)...", value: 12 },
+  { label: "Filtering candidate cities (2/9)...", value: 24 },
+  { label: "Scoring climate fit (3/9)...", value: 36 },
+  { label: "Checking attractions (4/9)...", value: 48 },
+  { label: "Estimating affordability (5/9)...", value: 60 },
+  { label: "Checking air quality (6/9)...", value: 72 },
+  { label: "Ranking best matches (7/9)...", value: 84 },
+  { label: "Loading destination intelligence (8/9)...", value: 92 },
+  { label: "Preparing results (9/9)...", value: 100 },
+];
 
 const gbHolidayDates = new Map([
   ["2026-05-04", "Early May bank holiday"],
@@ -219,32 +269,25 @@ function padDatePart(value: number): string {
   return String(value).padStart(2, "0");
 }
 
-function toIsoDate(date: Date): string {
-  return `${date.getUTCFullYear()}-${padDatePart(date.getUTCMonth() + 1)}-${padDatePart(
-    date.getUTCDate(),
+function toLocalIsoDate(date: Date): string {
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(
+    date.getDate(),
   )}`;
 }
 
-function formatCalendarTitle(year: number, monthIndex: number): string {
-  return monthTitle.format(new Date(Date.UTC(year, monthIndex, 1)));
+function isoDateToLocalDate(isoDate: string): Date {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(year, month - 1, day);
 }
 
-function buildCalendarDates(year: number, monthIndex: number): CalendarDate[] {
-  const firstOfMonth = new Date(Date.UTC(year, monthIndex, 1));
-  const mondayOffset = (firstOfMonth.getUTCDay() + 6) % 7;
-  const firstVisibleDate = new Date(Date.UTC(year, monthIndex, 1 - mondayOffset));
-
-  return Array.from({ length: 42 }, (_, index) => {
-    const date = new Date(firstVisibleDate);
-    date.setUTCDate(firstVisibleDate.getUTCDate() + index);
-
-    return {
-      day: String(date.getUTCDate()),
-      isoDate: toIsoDate(date),
-      label: dayLabel.format(date),
-      isCurrentMonth: date.getUTCMonth() === monthIndex,
-    };
-  });
+function dateRangeFromTravelRange(range: DraftRange | TravelWindow | null): DateRange | undefined {
+  if (!range) {
+    return undefined;
+  }
+  return {
+    from: isoDateToLocalDate(range.start_date),
+    to: isoDateToLocalDate(range.end_date),
+  };
 }
 
 function isWithinRange(date: string, startDate: string, endDate: string): boolean {
@@ -301,10 +344,9 @@ export default function Page() {
   };
   const [travelWindows, setTravelWindows] = useState(initialTravelWindows);
   const [selectedTravelWindowId, setSelectedTravelWindowId] = useState<string | null>(null);
-  const [visibleCalendarMonth, setVisibleCalendarMonth] = useState({ year: 2026, monthIndex: 4 });
+  const [visibleCalendarMonth, setVisibleCalendarMonth] = useState(() => new Date(2026, 4, 1));
   const [isAddingRange, setIsAddingRange] = useState(false);
   const [draftRange, setDraftRange] = useState<DraftRange | null>(null);
-  const [draftAnchorDate, setDraftAnchorDate] = useState<string | null>(null);
   const [isDraftComplete, setIsDraftComplete] = useState(false);
   const [rangePageIndex, setRangePageIndex] = useState(0);
   const [editingWindowId, setEditingWindowId] = useState<string | null>(null);
@@ -318,6 +360,7 @@ export default function Page() {
   const [radiusKm, setRadiusKm] = useState(1800);
   const [minPopulation, setMinPopulation] = useState(250000);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [loadingStepIndex, setLoadingStepIndex] = useState(0);
   const loadedIntelligenceIdsRef = useRef(new Set<string>());
   const loadingIntelligenceIdsRef = useRef(new Set<string>());
   const failedIntelligenceIdsRef = useRef(new Set<string>());
@@ -337,7 +380,7 @@ export default function Page() {
   const activeGroup = selectedTravelWindowId
     ? groups.find((group) => group.travel_window.id === selectedTravelWindowId)
     : undefined;
-  const activeRecommendations = activeGroup?.recommendations ?? [];
+  const activeRecommendations = activeGroup?.recommendations ?? emptyRecommendations;
   const mapDestinations = useMemo(
     () =>
       activeRecommendations.slice(0, 5).map((item) => ({
@@ -354,38 +397,43 @@ export default function Page() {
     [activeRecommendations],
   );
   const visibleCalendarRange = activeRange;
-  const visibleCalendarDates = buildCalendarDates(
-    visibleCalendarMonth.year,
-    visibleCalendarMonth.monthIndex,
+  const visibleCalendarDateRange = useMemo(() => {
+    if (!visibleCalendarRange) {
+      return undefined;
+    }
+    // When draft range is incomplete (only one date selected), show only the "from" date
+    // to prevent react-day-picker from showing a completed range
+    if (draftRange && !isDraftComplete) {
+      return { from: isoDateToLocalDate(draftRange.start_date) };
+    }
+    return dateRangeFromTravelRange(visibleCalendarRange);
+  }, [visibleCalendarRange, draftRange, isDraftComplete]);
+  const holidayDates = useMemo(
+    () => Array.from(gbHolidayDates.keys()).map(isoDateToLocalDate),
+    [],
   );
-  const visibleCalendarTitle = formatCalendarTitle(
-    visibleCalendarMonth.year,
-    visibleCalendarMonth.monthIndex,
-  );
-  const todayIsoDate = toIsoDate(new Date());
+  const holidayLabels = useMemo(() => Object.fromEntries(gbHolidayDates), []);
+  const loadingStep = searchProgressSteps[loadingStepIndex] ?? searchProgressSteps[0];
 
   useEffect(() => {
     setRangePageIndex((currentPage) => Math.min(currentPage, rangePageCount - 1));
   }, [rangePageCount]);
 
-  function shiftVisibleMonth(offset: number) {
-    setVisibleCalendarMonth((currentMonth) => {
-      const nextMonth = new Date(
-        Date.UTC(currentMonth.year, currentMonth.monthIndex + offset, 1),
-      );
-      return {
-        year: nextMonth.getUTCFullYear(),
-        monthIndex: nextMonth.getUTCMonth(),
-      };
-    });
-  }
+  useEffect(() => {
+    if (status !== "loading") {
+      return undefined;
+    }
+
+    const progressTimer = window.setInterval(() => {
+      setLoadingStepIndex((currentStep) => Math.min(currentStep + 1, 6));
+    }, 600);
+
+    return () => window.clearInterval(progressTimer);
+  }, [status]);
 
   function showMonthForDate(isoDate: string) {
-    const date = new Date(`${isoDate}T00:00:00Z`);
-    setVisibleCalendarMonth({
-      year: date.getUTCFullYear(),
-      monthIndex: date.getUTCMonth(),
-    });
+    const date = isoDateToLocalDate(isoDate);
+    setVisibleCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1));
   }
 
   const loadDestinationIntelligence = useCallback(
@@ -474,13 +522,13 @@ export default function Page() {
     if (isSavingDraftRange) {
       setTravelWindows((currentWindows) => [...currentWindows, targetWindow]);
       setSelectedTravelWindowId(targetWindow.id);
-      setDraftAnchorDate(null);
       setDraftRange(null);
       setIsDraftComplete(false);
       setIsAddingRange(false);
     }
 
     setStatus("loading");
+    setLoadingStepIndex(0);
     setIntelligenceErrors([]);
     setIntelligenceLoadingIds([]);
     loadedIntelligenceIdsRef.current.clear();
@@ -516,6 +564,7 @@ export default function Page() {
         },
         excluded_destination_ids: [],
       });
+      setLoadingStepIndex(6);
       const activeWindow = results.find((group) => group.travel_window.id === targetWindow.id)
         ?.travel_window;
       const activeItems =
@@ -530,6 +579,7 @@ export default function Page() {
         ...currentGroups.filter((group) => group.travel_window.id !== targetWindow.id),
         ...results,
       ]);
+      setLoadingStepIndex(7);
       setStatus("ready");
       const intelligenceWindow = activeWindow ?? targetWindow;
       void Promise.all(
@@ -537,34 +587,38 @@ export default function Page() {
           loadDestinationIntelligence(item, intelligenceWindow, intelligenceRequestVersion),
         ),
       );
-    } catch {
+    } catch (reason) {
       setIntelligenceLoadingIds([]);
       setStatus("error");
+      toast.error(
+        reason instanceof ApiRequestError ? reason.message : "Could not load recommendations.",
+      );
     }
   }
 
-  function handleCalendarDateClick(date: string) {
+  function handleCalendarRangeSelect(range: DateRange | undefined) {
     if (!isAddingRange) {
       return;
     }
 
-    if (!draftAnchorDate || isDraftComplete) {
-      setDraftAnchorDate(date);
-      setDraftRange({ start_date: date, end_date: date });
+    if (!range?.from) {
+      setDraftRange(null);
       setIsDraftComplete(false);
       return;
     }
 
-    setDraftRange(orderedRange(draftAnchorDate, date));
-    setIsDraftComplete(true);
+    const startDate = toLocalIsoDate(range.from);
+    const endDate = range.to ? toLocalIsoDate(range.to) : startDate;
+    setDraftRange(orderedRange(startDate, endDate));
+    setIsDraftComplete(Boolean(range.to));
   }
 
   function handleRangeButtonClick() {
     if (!isAddingRange) {
       setIsAddingRange(true);
-      setDraftAnchorDate(null);
       setDraftRange(null);
       setIsDraftComplete(false);
+      setSelectedTravelWindowId(null);
       return;
     }
 
@@ -576,7 +630,6 @@ export default function Page() {
 
     setTravelWindows((currentWindows) => [...currentWindows, newWindow]);
     setSelectedTravelWindowId(newWindow.id);
-    setDraftAnchorDate(null);
     setDraftRange(null);
     setIsDraftComplete(false);
     setIsAddingRange(false);
@@ -584,7 +637,6 @@ export default function Page() {
 
   function handleCancelRange() {
     setIsAddingRange(false);
-    setDraftAnchorDate(null);
     setDraftRange(null);
     setIsDraftComplete(false);
   }
@@ -642,6 +694,7 @@ export default function Page() {
   }
 
   return (
+    <TooltipProvider>
     <main>
       <header className="topbar">
         <div className="brand">
@@ -649,10 +702,10 @@ export default function Page() {
           <span className="caption">Long-weekend map planner</span>
         </div>
         <div className="row">
-          <span className="pill">Home city: {homeCity}</span>
-          <button className="primary-button" type="button">
+          <Pill>Home city: {homeCity}</Pill>
+          <Button type="button">
             Save planner
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -666,63 +719,26 @@ export default function Page() {
             </p>
           </div>
 
-          <div className="card stack">
-            <div className="row">
-              <div className="month-controls">
-                <button
-                  className="icon-button"
-                  type="button"
-                  aria-label="Previous month"
-                  onClick={() => shiftVisibleMonth(-1)}
-                >
-                  {"<"}
-                </button>
-                <strong>{visibleCalendarTitle}</strong>
-                <button
-                  className="icon-button"
-                  type="button"
-                  aria-label="Next month"
-                  onClick={() => shiftVisibleMonth(1)}
-                >
-                  {">"}
-                </button>
-              </div>
-              <span className="pill">GB holidays</span>
+          <Card className="card stack">
+            <CardContent className="stack">
+            <div className="calendar-card-header">
+              <Pill>GB holidays</Pill>
             </div>
-            <div className="calendar" aria-label={`${visibleCalendarTitle} calendar`}>
-              {["M", "T", "W", "T", "F", "S", "S"].map((day, index) => (
-                <div className="dow" key={`${day}-${index}`}>
-                  {day}
-                </div>
-              ))}
-              {visibleCalendarDates.map(({ day, isoDate, label, isCurrentMonth }, index) => {
-                const isHoliday = gbHolidayDates.has(isoDate);
-                const isSelected =
-                  visibleCalendarRange !== null &&
-                  isWithinRange(
-                    isoDate,
-                    visibleCalendarRange.start_date,
-                    visibleCalendarRange.end_date,
-                  );
-                const isToday = isoDate === todayIsoDate;
-                return (
-                  <button
-                    className={`day${!isCurrentMonth ? " outside-month" : ""}${
-                      isHoliday ? " holiday" : ""
-                    }${isSelected ? " selected" : ""}${isToday ? " current-day" : ""}${
-                      isAddingRange ? " picking" : ""
-                    }`}
-                    key={`${isoDate}-${index}`}
-                    type="button"
-                    aria-label={label}
-                    aria-disabled={!isAddingRange}
-                    onClick={() => handleCalendarDateClick(isoDate)}
-                  >
-                    {day}
-                  </button>
-                );
-              })}
-            </div>
+            <Calendar
+              mode="range"
+              month={visibleCalendarMonth}
+              onMonthChange={setVisibleCalendarMonth}
+              selected={visibleCalendarDateRange}
+              onSelect={handleCalendarRangeSelect}
+              modifiers={{ holiday: holidayDates }}
+              holidayLabels={holidayLabels}
+              labels={{
+                labelNext: () => "Next month",
+                labelPrevious: () => "Previous month",
+              }}
+              weekStartsOn={1}
+              className="travel-calendar"
+            />
             {draftRange ? (
               <p className="muted">
                 Draft range: {formatWindowLabel(draftRange.start_date, draftRange.end_date)}
@@ -730,43 +746,49 @@ export default function Page() {
             ) : isAddingRange ? (
               <p className="muted">Pick a start date, then an end date.</p>
             ) : null}
-          </div>
+            </CardContent>
+          </Card>
 
-          <div className="card stack">
-            <div className="row">
-              <strong>Candidate travel windows</strong>
+          <Card className="card stack">
+            <CardHeader className="card-heading-row">
+              <CardTitle>Candidate travel windows</CardTitle>
               <div className="range-create-actions">
-                <button
-                  className="secondary-button"
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   disabled={isAddingRange && !isDraftComplete}
                   onClick={handleRangeButtonClick}
                 >
                   {isAddingRange ? "Save draft range" : "Add range"}
-                </button>
+                </Button>
                 {isAddingRange ? (
-                  <button className="secondary-button" type="button" onClick={handleCancelRange}>
+                  <Button variant="outline" size="sm" type="button" onClick={handleCancelRange}>
                     Cancel range
-                  </button>
+                  </Button>
                 ) : null}
               </div>
-            </div>
-            <span className="score">{travelWindows.length} ranges</span>
+            </CardHeader>
+            <CardContent className="stack">
+            <Badge className="score-badge" variant="secondary">{travelWindows.length} ranges</Badge>
             <div className="range-list" aria-label="Candidate range list">
               {visibleTravelWindows.map((window) => {
                 const isSelected = window.id === selectedTravelWindowId;
                 return (
                   <div className="range-item" key={window.id}>
-                    <button
+                    <Button
                       aria-pressed={isSelected}
-                      className={`range-button${isSelected ? " active" : ""}`}
+                      className={cn(
+                        "range-button h-auto min-h-24 w-full shrink-0 justify-stretch whitespace-normal px-3 py-3 text-left",
+                        isSelected && "active",
+                      )}
                       type="button"
+                      variant="outline"
                       aria-label={`Select ${window.label}`}
                       onClick={() => {
                         setSelectedTravelWindowId(window.id);
                         showMonthForDate(window.start_date);
                         setIsAddingRange(false);
-                        setDraftAnchorDate(null);
                         setDraftRange(null);
                         setIsDraftComplete(false);
                       }}
@@ -776,49 +798,53 @@ export default function Page() {
                         <small>{window.notes}</small>
                       </span>
                       <span>
-                        <span className="pill">{window.status}</span>
-                        <span className="pill">{window.linked_holiday}</span>
+                        <Pill>{window.status}</Pill>
+                        {window.linked_holiday ? <Pill>{window.linked_holiday}</Pill> : null}
                       </span>
-                    </button>
+                    </Button>
                     {editingWindowId === window.id ? (
                       <div className="range-editor">
-                        <label>
-                          Range label
-                          <input
+                        <div className="field-stack">
+                          <Label htmlFor={`range-label-${window.id}`}>Range label</Label>
+                          <Input
+                            id={`range-label-${window.id}`}
                             value={editingLabel}
                             onChange={(event) => setEditingLabel(event.target.value)}
                           />
-                        </label>
-                        <button className="secondary-button" type="button" onClick={handleSaveRename}>
+                        </div>
+                        <Button variant="outline" size="sm" type="button" onClick={handleSaveRename}>
                           Save range
-                        </button>
+                        </Button>
                       </div>
                     ) : (
                       <div className="range-actions">
-                        <button
-                          className="secondary-button"
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           aria-label={`Rename ${window.label}`}
                           onClick={() => handleStartRename(window)}
                         >
                           Rename
-                        </button>
-                        <button
-                          className="secondary-button"
+                        </Button>
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           aria-label={`Archive ${window.label}`}
                           onClick={() => handleArchiveRange(window.id)}
                         >
                           Archive
-                        </button>
-                        <button
-                          className="secondary-button danger-button"
+                        </Button>
+                        <Button
                           type="button"
+                          variant="destructive"
+                          size="sm"
                           aria-label={`Remove ${window.label}`}
                           onClick={() => handleRemoveRange(window.id)}
                         >
                           Remove
-                        </button>
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -827,20 +853,22 @@ export default function Page() {
             </div>
             {rangePageCount > 1 ? (
               <div className="pagination-controls">
-                <button
-                  className="secondary-button"
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   disabled={rangePageIndex === 0}
                   onClick={() => setRangePageIndex((currentPage) => Math.max(0, currentPage - 1))}
                 >
                   Previous ranges
-                </button>
+                </Button>
                 <span className="muted">
                   Page {rangePageIndex + 1} of {rangePageCount}
                 </span>
-                <button
-                  className="secondary-button"
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   disabled={rangePageIndex >= rangePageCount - 1}
                   onClick={() =>
                     setRangePageIndex((currentPage) =>
@@ -849,35 +877,40 @@ export default function Page() {
                   }
                 >
                   Next ranges
-                </button>
+                </Button>
               </div>
             ) : null}
-          </div>
+            </CardContent>
+          </Card>
 
-          <div className="card stack">
-            <strong>Preference lens</strong>
-            <div className="row">
-              <span className="pill">
+          <Card className="card stack">
+            <CardHeader>
+              <CardTitle>Preference lens</CardTitle>
+            </CardHeader>
+            <CardContent className="stack">
+            <div className="badge-row">
+              <Pill>
                 {pace ? `${pace[0].toUpperCase() + pace.slice(1)} pace` : "Choose a range"}
-              </span>
-              <span className="pill">Warm</span>
-              <span className="pill">Food</span>
+              </Pill>
+              <Pill>Warm</Pill>
+              <Pill>Food</Pill>
             </div>
-            <label>
-              Search radius: {radiusKm} km
-              <input
+            <div className="field-stack">
+              <Label htmlFor="search-radius">Search radius: {radiusKm} km</Label>
+              <Slider
+                id="search-radius"
                 aria-label="Search radius"
                 min={100}
                 max={5000}
                 step={100}
-                type="range"
-                value={radiusKm}
-                onChange={(event) => setRadiusKm(Number(event.target.value))}
+                value={[radiusKm]}
+                onValueChange={([nextRadius]) => setRadiusKm(nextRadius)}
               />
-            </label>
-            <label>
-              Minimum population
-              <input
+            </div>
+            <div className="field-stack">
+              <Label htmlFor="minimum-population">Minimum population</Label>
+              <Input
+                id="minimum-population"
                 aria-label="Minimum population"
                 min={0}
                 step={50000}
@@ -885,25 +918,39 @@ export default function Page() {
                 value={minPopulation}
                 onChange={(event) => setMinPopulation(Number(event.target.value))}
               />
-            </label>
+            </div>
             <p className="muted">Excluded: Paris, Amsterdam, Barcelona</p>
-            <button
-              className="primary-button"
+            <Button
               type="button"
               disabled={!activeRange || status === "loading"}
               onClick={handleFindDestinations}
             >
-              {status === "loading" ? "Finding..." : "Find destinations"}
-            </button>
-            {status === "error" ? <p role="alert">Could not load recommendations.</p> : null}
+              {status === "loading" ? (
+                <>
+                  <Spinner data-icon="inline-start" />
+                  {loadingStep.label}
+                </>
+              ) : (
+                "Find destinations"
+              )}
+            </Button>
+            {status === "loading" ? (
+              <Progress aria-label={loadingStep.label} value={loadingStep.value} />
+            ) : null}
             {intelligenceErrors.map((error) => (
-              <p className="notice warning" key={error.destinationId} role="alert">
-                {error.severity === "warning"
-                  ? `Some destination intelligence is unavailable for ${error.city}: ${error.message}`
-                  : `Could not load destination intelligence for ${error.city}: ${error.message}`}
-              </p>
+              <Alert
+                variant={error.severity === "error" ? "destructive" : "default"}
+                key={error.destinationId}
+              >
+                <AlertDescription>
+                  {error.severity === "warning"
+                    ? `Some destination intelligence is unavailable for ${error.city}: ${error.message}`
+                    : `Could not load destination intelligence for ${error.city}: ${error.message}`}
+                </AlertDescription>
+              </Alert>
             ))}
-          </div>
+            </CardContent>
+          </Card>
         </aside>
 
         <DestinationMap
@@ -958,5 +1005,6 @@ export default function Page() {
         </aside>
       </section>
     </main>
+    </TooltipProvider>
   );
 }
