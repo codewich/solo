@@ -11,7 +11,7 @@ OPENAQ_RADIUS_M = 25_000
 
 def _headers() -> dict[str, str]:
     headers = {"User-Agent": USER_AGENT}
-    api_key = os.getenv("OPENAQ_API_KEY", "eb1b9cd8642b866d4b63d6f5a0aa1ee6df8bb116e0378737aa2f9f0e8dfd0820")
+    api_key = os.getenv("OPENAQ_API_KEY")
     if api_key:
         headers["X-API-Key"] = api_key
     return headers

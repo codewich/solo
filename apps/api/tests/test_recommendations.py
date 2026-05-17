@@ -1,18 +1,14 @@
 from datetime import date
 
-from fastapi.testclient import TestClient
-
-from solo_api.main import app
 from solo_api.models import (
     AirQualitySummary,
     AttractionSummary,
     ClimateSummary,
     CostOfLivingSummary,
-    PreferenceProfile,
     RecommendationRequest,
     TravelWindow,
 )
-from solo_api.recommendations import recommend_destinations
+from solo_api.recommendations import recommend_destinations, recommended_destinations_search
 from solo_api.recommendation_signals import SIGNAL_CACHE, get_destination_signals
 
 
@@ -55,14 +51,7 @@ def stub_live_signals(monkeypatch):
                 source="OpenAQ",
                 status="available",
             ),
-            "cost_of_living": CostOfLivingSummary(
-                currency="EUR",
-                meal_inexpensive=14,
-                coffee=2,
-                local_transport_ticket=2,
-                summary="Stubbed costs.",
-                source="Static Numbeo-compatible seed",
-            ),
+            "cost_of_living": CostOfLivingSummary(currency="", summary="Costs unavailable.", source="unavailable", status="unavailable"),
             "warnings": [],
         }
 
@@ -89,7 +78,6 @@ def test_recommendations_are_grouped_by_travel_window(monkeypatch):
             TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25)),
             TravelWindow(id="august", start_date=date(2026, 8, 29), end_date=date(2026, 8, 31)),
         ],
-        preferences=PreferenceProfile(climate="warm", interests={"food": 5, "history": 2}),
     )
 
     groups = recommend_destinations(request)
@@ -119,24 +107,18 @@ def test_recommendations_respect_exclusions(monkeypatch):
 def test_recommendations_endpoint_returns_groups(monkeypatch):
     stub_live_signals(monkeypatch)
     stub_city_candidates(monkeypatch)
-    client = TestClient(app)
-
-    response = client.post(
-        "/recommendations",
-        json={
-            "home_city": "London",
-            "travel_windows": [
-                {"id": "may", "start_date": "2026-05-23", "end_date": "2026-05-25"}
-            ],
-            "preferences": {"pace": "wandering", "climate": "warm", "budget_sensitivity": 3},
-            "excluded_destination_ids": ["prague-cz"],
-        },
+    request = RecommendationRequest(
+        home_city="London",
+        travel_windows=[
+            TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25))
+        ],
+        excluded_destination_ids=["prague-cz"],
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body[0]["travel_window"]["id"] == "may"
-    assert body[0]["recommendations"][0]["destination"]["id"] != "prague-cz"
+    groups = recommend_destinations(request)
+
+    assert groups[0].travel_window.id == "may"
+    assert groups[0].recommendations[0].destination.id != "prague-cz"
 
 
 def test_recommendations_include_live_score_breakdown(monkeypatch):
@@ -163,14 +145,7 @@ def test_recommendations_include_live_score_breakdown(monkeypatch):
                 source="OpenAQ",
                 status="available",
             ),
-            "cost_of_living": CostOfLivingSummary(
-                currency="EUR",
-                meal_inexpensive=12,
-                coffee=2,
-                local_transport_ticket=2,
-                summary="Moderate daily costs.",
-                source="Static Numbeo-compatible seed",
-            ),
+            "cost_of_living": CostOfLivingSummary(currency="", summary="Costs unavailable.", source="unavailable", status="unavailable"),
             "warnings": [],
         }
 
@@ -181,7 +156,6 @@ def test_recommendations_include_live_score_breakdown(monkeypatch):
         travel_windows=[
             TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25))
         ],
-        preferences=PreferenceProfile(climate="warm", budget_sensitivity=4),
     )
 
     groups = recommend_destinations(request)
@@ -193,7 +167,6 @@ def test_recommendations_include_live_score_breakdown(monkeypatch):
         + first.score_breakdown.attraction_score
         + first.score_breakdown.popularity_score
         + first.score_breakdown.affordability_score
-        + first.score_breakdown.air_quality_score
     )
     assert first.attraction_count == 6
     assert first.top_attractions == []
@@ -307,36 +280,34 @@ def test_recommended_destinations_endpoint_returns_direct_search_shape(monkeypat
                 source="OpenAQ",
                 status="available",
             ),
-            "cost_of_living": CostOfLivingSummary(
-                currency="EUR",
-                meal_inexpensive=11,
-                coffee=2,
-                local_transport_ticket=2,
-                summary="Affordable.",
-                source="Static Numbeo-compatible seed",
-            ),
+            "cost_of_living": CostOfLivingSummary(currency="", summary="Costs unavailable.", source="unavailable", status="unavailable"),
             "warnings": [],
         }
 
     monkeypatch.setattr("solo_api.recommendations.get_destination_signals", fake_signals)
     stub_city_candidates(monkeypatch)
-    client = TestClient(app)
-
-    response = client.get(
-        "/api/destinations/recommended?month=5&budget=4&region=PT&q=lis&radiusKm=1200&minPopulation=300000"
+    body = recommended_destinations_search(
+        month=5,
+        region="PT",
+        query="lis",
+        radius_km=1200,
+        min_population=300000,
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body[0]["id"] == "lisbon-pt"
-    assert body[0]["name"] == "Lisbon"
-    assert body[0]["coordinates"] == {"lat": 38.7223, "lng": -9.1393}
-    assert body[0]["travelScore"] == sum(body[0]["scoreBreakdown"].values())
-    assert body[0]["topAttractions"] == []
-    assert body[0]["attractionCount"] == 4
-    assert body[0]["imageUrl"] == "https://images.example/city.jpg"
-    assert body[0]["airQuality"]["status"] == "available"
-    assert "airQualityScore" in body[0]["scoreBreakdown"]
+    assert body[0].id == "lisbon-pt"
+    assert body[0].name == "Lisbon"
+    assert body[0].coordinates.model_dump() == {"lat": 38.7223, "lng": -9.1393}
+    assert body[0].travel_score == (
+        body[0].score_breakdown.climate_score
+        + body[0].score_breakdown.attraction_score
+        + body[0].score_breakdown.popularity_score
+        + body[0].score_breakdown.affordability_score
+    )
+    assert body[0].top_attractions == []
+    assert body[0].attraction_count == 4
+    assert body[0].image_url == "https://images.example/city.jpg"
+    assert body[0].air_quality is not None
+    assert body[0].air_quality.status == "available"
 
 
 def test_recommendations_query_city_candidates_with_radius_and_population(monkeypatch):

@@ -3,12 +3,12 @@ from math import asin, cos, radians, sin, sqrt
 
 import httpx
 
-from solo_api.cache import TtlCache
+from solo_api.cache import CITY_CANDIDATE_TTL_SECONDS, TtlCache
 from solo_api.http import DEFAULT_TIMEOUT
 from solo_api.models import Destination
+from solo_api.storage import find_city_candidates, get_cached_cities, set_cached_cities, upsert_cities
 
 GEODB_CITIES_URL = "https://wft-geo-db.p.rapidapi.com/v1/geo/cities"
-GEODB_API_KEY = os.getenv("GEODB_RAPIDAPI_KEY", "d0f91231d7msh7ae2cdf554472eap143fa8jsnfa4e0f676020")
 GEODB_HOST = "wft-geo-db.p.rapidapi.com"
 GEODB_NATIVE_RADIUS_LIMIT_KM = 100
 EUROPE_COUNTRY_IDS = ",".join(
@@ -36,7 +36,16 @@ EUROPE_COUNTRY_IDS = ",".join(
     ]
 )
 
-CITY_CANDIDATE_CACHE: TtlCache[list[Destination]] = TtlCache(ttl_seconds=60 * 60 * 12)
+CITY_CANDIDATE_CACHE: TtlCache[list[Destination]] = TtlCache(
+    ttl_seconds=CITY_CANDIDATE_TTL_SECONDS
+)
+
+
+def _geodb_api_key() -> str:
+    api_key = os.getenv("GEODB_RAPIDAPI_KEY")
+    if not api_key:
+        raise RuntimeError("GEODB_RAPIDAPI_KEY is required when city candidates are not in storage.")
+    return api_key
 
 
 def _location(latitude: float, longitude: float) -> str:
@@ -132,6 +141,24 @@ def search_city_candidates(
     if cached is not None:
         return cached
 
+    persisted = find_city_candidates(
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        min_population=min_population,
+        limit=limit,
+        region=region,
+        query=query,
+    )
+    if persisted:
+        CITY_CANDIDATE_CACHE.set(key, persisted)
+        return persisted
+
+    cached_payload = get_cached_cities(key)
+    if cached_payload is not None:
+        CITY_CANDIDATE_CACHE.set(key, cached_payload)
+        return cached_payload
+
     uses_native_radius = radius_km <= GEODB_NATIVE_RADIUS_LIMIT_KM
     params = {
         "minPopulation": min_population,
@@ -156,7 +183,7 @@ def search_city_candidates(
         GEODB_CITIES_URL,
         params=params,
         headers={
-            "X-RapidAPI-Key": GEODB_API_KEY,
+            "X-RapidAPI-Key": _geodb_api_key(),
             "X-RapidAPI-Host": GEODB_HOST,
         },
         timeout=DEFAULT_TIMEOUT,
@@ -174,5 +201,12 @@ def search_city_candidates(
             for destination in destinations
             if _distance_km(latitude, longitude, destination.latitude, destination.longitude) <= radius_km
         ][:limit]
+    upsert_cities(destinations)
+    set_cached_cities(
+        key=key,
+        destinations=destinations,
+        ttl_seconds=CITY_CANDIDATE_TTL_SECONDS,
+        provider="GeoDB Cities",
+    )
     CITY_CANDIDATE_CACHE.set(key, destinations)
     return destinations

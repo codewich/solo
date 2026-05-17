@@ -14,6 +14,8 @@ class FakeResponse:
 
 def test_search_city_candidates_uses_geodb_filters(monkeypatch):
     CITY_CANDIDATE_CACHE._values.clear()
+    monkeypatch.setenv("GEODB_RAPIDAPI_KEY", "test-key")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     calls = []
 
     def fake_get(url: str, params: dict, headers: dict, timeout):
@@ -70,6 +72,8 @@ def test_search_city_candidates_uses_geodb_filters(monkeypatch):
 
 def test_search_city_candidates_filters_large_radius_locally(monkeypatch):
     CITY_CANDIDATE_CACHE._values.clear()
+    monkeypatch.setenv("GEODB_RAPIDAPI_KEY", "test-key")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     calls = []
 
     def fake_get(url: str, params: dict, headers: dict, timeout):
@@ -117,6 +121,8 @@ def test_search_city_candidates_filters_large_radius_locally(monkeypatch):
 
 def test_search_city_candidates_uses_cache(monkeypatch):
     CITY_CANDIDATE_CACHE._values.clear()
+    monkeypatch.setenv("GEODB_RAPIDAPI_KEY", "test-key")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     calls = {"count": 0}
 
     def fake_get(url: str, params: dict, headers: dict, timeout):

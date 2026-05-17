@@ -52,7 +52,6 @@ def recommendations(request: RecommendationRequest) -> list[RecommendationGroup]
 @app.get("/api/destinations/recommended", response_model=list[RecommendedDestination])
 def recommended_destinations(
     month: int | None = None,
-    budget: int | None = None,
     region: str | None = None,
     q: str | None = None,
     latitude: float | None = None,
@@ -62,7 +61,6 @@ def recommended_destinations(
 ) -> list[RecommendedDestination]:
     return recommended_destinations_search(
         month=month,
-        budget=budget,
         region=region,
         query=q,
         latitude=latitude,
@@ -94,5 +92,4 @@ def itineraries(request: ItineraryRequest) -> dict:
     return build_itinerary(
         destination_city=request.destination_city,
         window=request.travel_window,
-        preferences=request.preferences,
     )

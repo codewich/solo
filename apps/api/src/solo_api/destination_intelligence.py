@@ -4,7 +4,7 @@ from typing import TypeVar
 
 from solo_api.attractions import AttractionLookupError, fetch_attractions
 from solo_api.cache import TtlCache
-from solo_api.cost_of_living import StaticCostOfLivingProvider
+from solo_api.cost_of_living import unavailable_cost_of_living_summary
 from solo_api.hotels import summarize_hotel_prices
 from solo_api.models import (
     DestinationIntelligence,
@@ -112,7 +112,7 @@ def build_destination_intelligence(
         attractions=attractions,
         hotels=_run_step(
             step="hotels",
-            service="Amadeus",
+            service="Hotel pricing",
             action=lambda: summarize_hotel_prices(
                 city_code=city_code,
                 check_in_date=request.start_date,
@@ -121,11 +121,8 @@ def build_destination_intelligence(
         ),
         cost_of_living=_run_step(
             step="cost_of_living",
-            service="Cost of living seed",
-            action=lambda: StaticCostOfLivingProvider().summary_for(
-                city=request.destination_city,
-                country=request.country,
-            ),
+            service="Cost of living",
+            action=lambda: unavailable_cost_of_living_summary(request.destination_city),
         ),
         warnings=warnings,
     )

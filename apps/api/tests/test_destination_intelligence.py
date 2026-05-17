@@ -1,13 +1,12 @@
 from datetime import date
 
 import httpx
-from fastapi.testclient import TestClient
 
 from solo_api.attractions import AttractionLookupError, count_attractions, fetch_attractions
 from solo_api.cache import TtlCache
-from solo_api.cost_of_living import StaticCostOfLivingProvider
+from solo_api.cost_of_living import unavailable_cost_of_living_summary
+from solo_api.destination_intelligence import DestinationIntelligenceStepError, build_destination_intelligence
 from solo_api.hotels import summarize_hotel_prices
-from solo_api.main import app
 from solo_api.models import (
     AttractionSummary,
     ClimateSummary,
@@ -237,10 +236,7 @@ def test_fetch_attractions_keeps_pois_when_wikimedia_summary_is_forbidden(monkey
     assert attractions[0].description is None
 
 
-def test_hotel_summary_returns_unavailable_without_credentials(monkeypatch):
-    monkeypatch.delenv("AMADEUS_CLIENT_ID", raising=False)
-    monkeypatch.delenv("AMADEUS_CLIENT_SECRET", raising=False)
-
+def test_hotel_summary_returns_unavailable_without_provider():
     summary = summarize_hotel_prices(
         city_code="LIS",
         check_in_date=date(2026, 5, 22),
@@ -251,12 +247,10 @@ def test_hotel_summary_returns_unavailable_without_credentials(monkeypatch):
     assert summary.sample_size == 0
 
 
-def test_static_cost_of_living_provider_returns_city_summary():
-    provider = StaticCostOfLivingProvider()
+def test_cost_of_living_returns_unavailable_summary():
+    summary = unavailable_cost_of_living_summary(city="Lisbon")
 
-    summary = provider.summary_for(city="Lisbon", country="Portugal")
-
-    assert summary.currency == "EUR"
+    assert summary.status == "unavailable"
     assert "Lisbon" in summary.summary
 
 
@@ -286,25 +280,22 @@ def test_destination_intelligence_endpoint_aggregates_sources(monkeypatch):
         ),
     )
 
-    response = TestClient(app).post(
-        "/destination-intelligence",
-        json={
-            "destination_city": "Lisbon",
-            "country": "Portugal",
-            "latitude": 38.7223,
-            "longitude": -9.1393,
-            "start_date": "2026-05-22",
-            "end_date": "2026-05-25",
-        },
+    result = build_destination_intelligence(
+        DestinationIntelligenceRequest(
+            destination_city="Lisbon",
+            country="Portugal",
+            latitude=38.7223,
+            longitude=-9.1393,
+            start_date=date(2026, 5, 22),
+            end_date=date(2026, 5, 25),
+        )
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["destination_city"] == "Lisbon"
-    assert payload["climate"]["average_temperature_c"] == 23.0
-    assert payload["attractions"][0]["name"] == "Belem Tower"
-    assert payload["hotels"]["median_nightly_price"] == 118.0
-    assert payload["cost_of_living"]["currency"] == "EUR"
+    assert result.destination_city == "Lisbon"
+    assert result.climate.average_temperature_c == 23.0
+    assert result.attractions[0].name == "Belem Tower"
+    assert result.hotels.median_nightly_price == 118.0
+    assert result.cost_of_living.status == "unavailable"
 
 
 def test_destination_intelligence_endpoint_reports_failing_service(monkeypatch):
@@ -316,26 +307,25 @@ def test_destination_intelligence_endpoint_reports_failing_service(monkeypatch):
         raise httpx.TimeoutException("timed out while contacting Open-Meteo")
 
     monkeypatch.setattr("solo_api.destination_intelligence.fetch_climate_summary", broken_climate)
-    client = TestClient(app, raise_server_exceptions=False)
-
-    response = client.post(
-        "/destination-intelligence",
-        json={
-            "destination_city": "Lisbon",
-            "country": "Portugal",
-            "latitude": 38.7223,
-            "longitude": -9.1393,
-            "start_date": "2026-05-22",
-            "end_date": "2026-05-25",
-        },
-    )
-
-    assert response.status_code == 502
-    assert response.json()["detail"] == {
-        "step": "climate",
-        "service": "Open-Meteo",
-        "message": "Open-Meteo failed during climate lookup: timed out while contacting Open-Meteo",
-    }
+    try:
+        build_destination_intelligence(
+            DestinationIntelligenceRequest(
+                destination_city="Lisbon",
+                country="Portugal",
+                latitude=38.7223,
+                longitude=-9.1393,
+                start_date=date(2026, 5, 22),
+                end_date=date(2026, 5, 25),
+            )
+        )
+    except DestinationIntelligenceStepError as error:
+        assert error.step == "climate"
+        assert error.service == "Open-Meteo"
+        assert error.message == (
+            "Open-Meteo failed during climate lookup: timed out while contacting Open-Meteo"
+        )
+    else:
+        raise AssertionError("Expected climate lookup failure")
 
 
 def test_destination_intelligence_keeps_partial_result_when_attractions_timeout(monkeypatch):
@@ -372,23 +362,20 @@ def test_destination_intelligence_keeps_partial_result_when_attractions_timeout(
         ),
     )
 
-    response = TestClient(app).post(
-        "/destination-intelligence",
-        json={
-            "destination_city": "Metropolitan City of Milan",
-            "country": "Italy",
-            "latitude": 45.4642,
-            "longitude": 9.19,
-            "start_date": "2026-05-22",
-            "end_date": "2026-05-25",
-        },
+    result = build_destination_intelligence(
+        DestinationIntelligenceRequest(
+            destination_city="Metropolitan City of Milan",
+            country="Italy",
+            latitude=45.4642,
+            longitude=9.19,
+            start_date=date(2026, 5, 22),
+            end_date=date(2026, 5, 25),
+        )
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["climate"]["average_temperature_c"] == 20.0
-    assert payload["attractions"] == []
-    assert payload["warnings"] == [
+    assert result.climate.average_temperature_c == 20.0
+    assert result.attractions == []
+    assert [warning.model_dump() for warning in result.warnings] == [
         {
             "step": "attractions",
             "service": "OpenStreetMap",
@@ -484,20 +471,20 @@ def test_destination_intelligence_does_not_cache_partial_warning_results(monkeyp
 
     monkeypatch.setattr("solo_api.destination_intelligence.fetch_attractions", flaky_attractions)
 
-    body = {
-        "destination_city": "London",
-        "country": "United Kingdom",
-        "latitude": 51.5072,
-        "longitude": -0.1276,
-        "start_date": "2026-05-22",
-        "end_date": "2026-05-25",
-    }
-    first = TestClient(app).post("/destination-intelligence", json=body).json()
-    second = TestClient(app).post("/destination-intelligence", json=body).json()
+    request = DestinationIntelligenceRequest(
+        destination_city="London",
+        country="United Kingdom",
+        latitude=51.5072,
+        longitude=-0.1276,
+        start_date=date(2026, 5, 22),
+        end_date=date(2026, 5, 25),
+    )
+    first = build_destination_intelligence(request)
+    second = build_destination_intelligence(request)
 
-    assert first["warnings"]
-    assert second["warnings"] == []
-    assert second["attractions"][0]["name"] == "Museum of London"
+    assert first.warnings
+    assert second.warnings == []
+    assert second.attractions[0].name == "Museum of London"
     assert calls["attractions"] == 2
 
 

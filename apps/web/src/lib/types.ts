@@ -1,21 +1,9 @@
-export type Pace = "rushed" | "balanced" | "wandering";
-
 export type TravelWindow = {
   id: string;
   start_date: string;
   end_date: string;
   label?: string | null;
-  linked_holiday?: string | null;
   status?: "candidate" | "planned" | "archived";
-  notes?: string | null;
-};
-
-export type PreferenceProfile = {
-  pace: Pace;
-  climate?: "cool" | "mild" | "warm" | "any";
-  budget_sensitivity?: number;
-  popularity?: "popular" | "underrated" | "mix";
-  interests?: Record<string, number>;
 };
 
 export type RecommendationRequest = {
@@ -28,8 +16,7 @@ export type RecommendationRequest = {
   region?: string | null;
   q?: string | null;
   travel_windows: TravelWindow[];
-  preferences: PreferenceProfile;
-  excluded_destination_ids: string[];
+  excluded_destination_ids?: string[];
 };
 
 export type Destination = {
@@ -61,7 +48,6 @@ export type Recommendation = {
   attractionCount?: number;
   best_months_to_visit?: string[];
   top_attractions?: string[];
-  estimated_daily_budget?: number | null;
   summary?: string | null;
   image_url?: string | null;
   imageUrl?: string | null;

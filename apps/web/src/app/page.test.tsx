@@ -2,6 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Toaster } from "@/components/ui/sonner";
 import Page from "./page";
 
+vi.mock("@/components/auth-button", () => ({
+  AuthButton: () => <button type="button">Sign in with Google</button>,
+}));
+
 describe("Solo homepage", () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -41,7 +45,7 @@ describe("Solo homepage", () => {
                     source: "OpenAQ",
                     status: "available",
                   },
-                  reasons: ["Matches your preference for warmer destinations."],
+                  reasons: ["Fits this travel window."],
                   caveats: [],
                 },
               ],
@@ -98,7 +102,7 @@ describe("Solo homepage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders the travel calendar map workflow", () => {
+  it("renders the travel calendar map workflow", async () => {
     render(<Page />);
 
     expect(screen.getByRole("heading", { name: "Solo" })).toBeInTheDocument();
@@ -108,6 +112,9 @@ describe("Solo homepage", () => {
     expect(screen.getByLabelText("Europe destination map")).toBeInTheDocument();
     expect(screen.getByTestId("maplibre-map")).toBeInTheDocument();
     expect(screen.getByLabelText("Search radius 1800 km")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
+    });
   });
 
   it("starts without active date-range recommendations", () => {
@@ -185,6 +192,8 @@ describe("Solo homepage", () => {
         candidate_limit: 12,
       }),
     );
+    expect(payload).not.toHaveProperty("preferences");
+    expect(payload).not.toHaveProperty("excluded_destination_ids");
   });
 
   it("shows a spinner and loading step on the find destinations button", async () => {
@@ -337,7 +346,7 @@ describe("Solo homepage", () => {
                     population: 544851,
                   },
                   score: 91,
-                  reasons: ["Matches your preference for warmer destinations."],
+                  reasons: ["Fits this travel window."],
                   caveats: [],
                 },
               ],
@@ -367,7 +376,7 @@ describe("Solo homepage", () => {
               median_nightly_price: 118,
               currency: "EUR",
               sample_size: 12,
-              source: "Amadeus",
+              source: "unavailable",
               status: "available",
             },
             cost_of_living: {
@@ -376,7 +385,7 @@ describe("Solo homepage", () => {
               coffee: 2.2,
               local_transport_ticket: 2,
               summary: "Lisbon is moderate for Western Europe.",
-              source: "Static Numbeo-compatible seed",
+              source: "unavailable",
             },
           }),
         };
@@ -392,7 +401,7 @@ describe("Solo homepage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
-      expect(screen.getByText("23C average")).toBeInTheDocument();
+      expect(screen.getByText("Climate data available")).toBeInTheDocument();
     });
     expect(screen.getByText("Belem Tower")).toBeInTheDocument();
     expect(screen.getByText("EUR 118 median hotel")).toBeInTheDocument();
@@ -483,13 +492,13 @@ describe("Solo homepage", () => {
               median_nightly_price: null,
               currency: null,
               sample_size: 0,
-              source: "Amadeus",
+              source: "unavailable",
               status: "unavailable",
             },
             cost_of_living: {
               currency: "EUR",
               summary: `${body.destination_city} cost summary.`,
-              source: "Static Numbeo-compatible seed",
+              source: "unavailable",
             },
             warnings: [],
           }),
@@ -563,7 +572,7 @@ describe("Solo homepage", () => {
                     population: 544851,
                   },
                   score: 91,
-                  reasons: ["Matches your preference for warmer destinations."],
+                  reasons: ["Fits this travel window."],
                   caveats: [],
                 },
               ],
@@ -608,13 +617,13 @@ describe("Solo homepage", () => {
           median_nightly_price: 118,
           currency: "EUR",
           sample_size: 12,
-          source: "Amadeus",
+          source: "unavailable",
           status: "available",
         },
         cost_of_living: {
           currency: "EUR",
           summary: "Lisbon is moderate for Western Europe.",
-          source: "Static Numbeo-compatible seed",
+          source: "unavailable",
         },
       }),
     });
@@ -622,7 +631,7 @@ describe("Solo homepage", () => {
     await waitFor(() => {
       expect(screen.queryByRole("status", { name: "Loading intelligence for Lisbon" })).not.toBeInTheDocument();
     });
-    expect(screen.getByText("23C average")).toBeInTheDocument();
+    expect(screen.getByText("Climate data available")).toBeInTheDocument();
   });
 
   it("shows which intelligence service failed without hiding recommendations", async () => {
@@ -645,7 +654,7 @@ describe("Solo homepage", () => {
                     population: 544851,
                   },
                   score: 91,
-                  reasons: ["Matches your preference for warmer destinations."],
+                  reasons: ["Fits this travel window."],
                   caveats: [],
                 },
               ],
@@ -733,13 +742,13 @@ describe("Solo homepage", () => {
               median_nightly_price: null,
               currency: null,
               sample_size: 0,
-              source: "Amadeus",
+              source: "unavailable",
               status: "unavailable",
             },
             cost_of_living: {
               currency: "EUR",
               summary: "Milan is expensive for Italy.",
-              source: "Static Numbeo-compatible seed",
+              source: "unavailable",
             },
             warnings: [
               {
@@ -762,7 +771,7 @@ describe("Solo homepage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
-      expect(screen.getByText("20C average")).toBeInTheDocument();
+      expect(screen.getByText("Climate data available")).toBeInTheDocument();
     });
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Some destination intelligence is unavailable for Metropolitan City of Milan: OpenStreetMap failed during attractions lookup: The read operation timed out",
@@ -834,17 +843,19 @@ describe("Solo homepage", () => {
     expect(screen.getByRole("button", { name: "31 Aug 2026" })).toHaveClass("selected");
   });
 
-  it("infers travel pace from the selected date range", () => {
+  it("does not show hidden preference tags for the selected date range", () => {
     render(<Page />);
 
-    expect(screen.getByText("Choose a range")).toBeInTheDocument();
+    expect(screen.queryByText("Choose a range")).not.toBeInTheDocument();
+    expect(screen.queryByText("Warm")).not.toBeInTheDocument();
+    expect(screen.queryByText("Food")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Excluded:/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Add range" }));
     fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
     fireEvent.click(screen.getByRole("button", { name: "27 May 2026" }));
 
-    expect(screen.getByText("Wandering pace")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Travel pace")).not.toBeInTheDocument();
+    expect(screen.queryByText(/pace/i)).not.toBeInTheDocument();
   });
 
   it("saves a new draft range when finding recommendations", async () => {

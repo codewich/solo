@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from solo_api.air_quality import fetch_air_quality_summary, unavailable_air_quality_summary
 from solo_api.attractions import count_attractions, fetch_wikimedia_image, fetch_wikimedia_summary
 from solo_api.cache import TtlCache
-from solo_api.cost_of_living import StaticCostOfLivingProvider
+from solo_api.cost_of_living import unavailable_cost_of_living_summary
 from solo_api.models import AirQualitySummary, ClimateSummary, CostOfLivingSummary, Destination, TravelWindow
 from solo_api.weather import fetch_climate_summary
 
@@ -99,10 +99,7 @@ def get_destination_signals(destination: Destination, window: TravelWindow) -> D
         air_quality = unavailable_air_quality_summary()
         warnings.append("OpenAQ unavailable; air quality score used a neutral fallback.")
 
-    cost_of_living = StaticCostOfLivingProvider().summary_for(
-        city=destination.city,
-        country=destination.country,
-    )
+    cost_of_living = unavailable_cost_of_living_summary(destination.city)
 
     signals = DestinationSignals(
         climate=climate,

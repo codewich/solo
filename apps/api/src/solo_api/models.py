@@ -3,17 +3,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-Pace = Literal["rushed", "balanced", "wandering"]
-
 
 class TravelWindow(BaseModel):
     id: str
     start_date: date
     end_date: date
     label: str | None = None
-    linked_holiday: str | None = None
     status: Literal["candidate", "planned", "archived"] = "candidate"
-    notes: str | None = None
 
     @model_validator(mode="after")
     def ensure_valid_range(self) -> "TravelWindow":
@@ -25,23 +21,6 @@ class TravelWindow(BaseModel):
     @property
     def duration_days(self) -> int:
         return (self.end_date - self.start_date).days + 1
-
-
-class PreferenceProfile(BaseModel):
-    pace: Pace = "balanced"
-    climate: Literal["cool", "mild", "warm", "any"] = "any"
-    budget_sensitivity: int = Field(default=3, ge=1, le=5)
-    popularity: Literal["popular", "underrated", "mix"] = "mix"
-    interests: dict[str, int] = Field(
-        default_factory=lambda: {
-            "food": 3,
-            "history": 3,
-            "museums": 3,
-            "nightlife": 2,
-            "nature": 2,
-            "architecture": 3,
-        }
-    )
 
 
 class Destination(BaseModel):
@@ -76,7 +55,6 @@ class RecommendationRequest(BaseModel):
     region: str | None = None
     q: str | None = None
     travel_windows: list[TravelWindow]
-    preferences: PreferenceProfile = Field(default_factory=PreferenceProfile)
     excluded_destination_ids: list[str] = Field(default_factory=list)
 
 
@@ -90,7 +68,6 @@ class Recommendation(BaseModel):
     best_months_to_visit: list[str] = Field(default_factory=list)
     top_attractions: list[str] = Field(default_factory=list)
     attraction_count: int = Field(default=0, alias="attractionCount")
-    estimated_daily_budget: float | None = None
     summary: str | None = None
     image_url: str | None = Field(default=None, alias="imageUrl")
     air_quality: "AirQualitySummary | None" = Field(default=None, alias="airQuality")
@@ -119,7 +96,6 @@ class RecommendedDestination(BaseModel):
     best_months_to_visit: list[str] = Field(alias="bestMonthsToVisit")
     top_attractions: list[str] = Field(alias="topAttractions")
     attraction_count: int = Field(default=0, alias="attractionCount")
-    estimated_daily_budget: float | None = Field(default=None, alias="estimatedDailyBudget")
     summary: str | None = None
     image_url: str | None = Field(default=None, alias="imageUrl")
     air_quality: "AirQualitySummary | None" = Field(default=None, alias="airQuality")
@@ -175,7 +151,7 @@ class HotelPriceSummary(BaseModel):
     median_nightly_price: float | None
     currency: str | None
     sample_size: int
-    source: str = "Amadeus"
+    source: str = "unavailable"
     status: Literal["available", "unavailable"] = "available"
 
 
@@ -186,6 +162,7 @@ class CostOfLivingSummary(BaseModel):
     local_transport_ticket: float | None = None
     summary: str
     source: str
+    status: Literal["available", "unavailable"] = "available"
 
 
 class AirQualitySummary(BaseModel):

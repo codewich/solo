@@ -16,6 +16,7 @@ from solo_api.models import (
     TravelWindow,
 )
 from solo_api.recommendation_signals import DestinationSignals, get_destination_signals
+from solo_api.storage import store_recommendation_score
 
 DEFAULT_CENTER_LATITUDE = 51.5072
 DEFAULT_CENTER_LONGITUDE = -0.1276
@@ -88,6 +89,8 @@ def _popularity_score(summary: str | None, destination: Destination) -> int:
 
 
 def _affordability_score(cost: CostOfLivingSummary, destination: Destination) -> int:
+    if cost.status == "unavailable":
+        return 10
     score = 10
     if cost.meal_inexpensive is not None:
         if cost.meal_inexpensive <= 12:
@@ -112,12 +115,6 @@ def _air_quality_score(air_quality: AirQualitySummary) -> int:
     return 2
 
 
-def _estimated_daily_budget(cost: CostOfLivingSummary, destination: Destination) -> float | None:
-    if cost.meal_inexpensive is not None and cost.coffee is not None and cost.local_transport_ticket is not None:
-        return round(cost.meal_inexpensive * 2 + cost.coffee * 2 + cost.local_transport_ticket * 2, 2)
-    return None
-
-
 def _best_months_to_visit(destination: Destination) -> list[str]:
     return []
 
@@ -133,12 +130,6 @@ def score_destination(
     affordability_score = _affordability_score(signals.cost_of_living, destination)
     air_quality_score = _air_quality_score(signals.air_quality)
 
-    if request.preferences.climate == "warm" and signals.climate.average_temperature_c is not None:
-        if signals.climate.average_temperature_c >= 18:
-            climate_score = min(35, climate_score + 3)
-        elif signals.climate.average_temperature_c < 12:
-            climate_score = max(0, climate_score - 3)
-
     breakdown = RecommendationScoreBreakdown(
         climate_score=climate_score,
         attraction_score=attraction_score,
@@ -151,7 +142,6 @@ def score_destination(
         + breakdown.attraction_score
         + breakdown.popularity_score
         + breakdown.affordability_score
-        + breakdown.air_quality_score
     )
 
     reasons = [
@@ -159,7 +149,7 @@ def score_destination(
         f"Live attraction density contributes {breakdown.attraction_score} points.",
         f"Popularity context contributes {breakdown.popularity_score} points.",
         f"Affordability contributes {breakdown.affordability_score} points.",
-        f"Air quality contributes {breakdown.air_quality_score} points.",
+        "Air quality is shown as context and is not part of the travel score.",
     ]
 
     return score, breakdown, reasons, signals.warnings, signals
@@ -171,6 +161,12 @@ def _recommendation_for(
     request: RecommendationRequest,
 ) -> Recommendation:
     score, breakdown, reasons, warnings, signals = score_destination(destination, window, request)
+    store_recommendation_score(
+        city_id=destination.id,
+        travel_window_id=window.id,
+        breakdown=breakdown,
+        final_score=score,
+    )
 
     return Recommendation(
         travel_window_id=window.id,
@@ -182,7 +178,6 @@ def _recommendation_for(
         best_months_to_visit=_best_months_to_visit(destination),
         top_attractions=[],
         attraction_count=signals.attraction_count,
-        estimated_daily_budget=_estimated_daily_budget(signals.cost_of_living, destination),
         summary=signals.summary,
         image_url=signals.image_url,
         air_quality=signals.air_quality,
@@ -225,7 +220,6 @@ def recommend_destinations(request: RecommendationRequest) -> list[Recommendatio
 
 def recommended_destinations_search(
     month: int | None = None,
-    budget: int | None = None,
     region: str | None = None,
     query: str | None = None,
     latitude: float | None = None,
@@ -246,7 +240,6 @@ def recommended_destinations_search(
         radius_km=radius_km,
         min_population=min_population,
         travel_windows=[window],
-        preferences={"budget_sensitivity": budget or 3},
     )
     candidates = _filtered_candidates(request, region=region, query=query)
     recommendations = [_recommendation_for(destination, window, request) for destination in candidates]
@@ -263,7 +256,6 @@ def recommended_destinations_search(
             best_months_to_visit=item.best_months_to_visit,
             top_attractions=item.top_attractions,
             attraction_count=item.attraction_count,
-            estimated_daily_budget=item.estimated_daily_budget,
             summary=item.summary,
             image_url=item.image_url,
             air_quality=item.air_quality,

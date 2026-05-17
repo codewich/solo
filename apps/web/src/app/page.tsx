@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -21,7 +22,6 @@ import {
 import { DestinationMap } from "./destination-map";
 import { ApiRequestError, fetchDestinationIntelligence, fetchRecommendations } from "@/lib/api";
 import { formatWindowLabel } from "@/lib/date-windows";
-import { inferPaceFromRange } from "@/lib/travel-pacing";
 import { cn } from "@/lib/utils";
 import type { DateRange } from "react-day-picker";
 import type {
@@ -32,12 +32,22 @@ import type {
   TravelWindow,
 } from "@/lib/types";
 
+const AuthButton = dynamic(
+  () => import("@/components/auth-button").then((module) => module.AuthButton),
+  {
+    ssr: false,
+    loading: () => (
+      <Button type="button" variant="outline" disabled>
+        Account
+      </Button>
+    ),
+  },
+);
+
 type PlanningWindow = TravelWindow & {
   dates: string;
   label: string;
-  linked_holiday: string | null;
   status: "candidate" | "planned" | "archived";
-  notes: string;
 };
 
 type DraftRange = {
@@ -185,7 +195,7 @@ function DestinationCard({
         <div className="destination-intelligence">
           {intelligence.climate?.average_temperature_c !== null &&
           intelligence.climate?.average_temperature_c !== undefined ? (
-            <Pill>{intelligence.climate.average_temperature_c}C average</Pill>
+            <Pill>Climate data available</Pill>
           ) : null}
           {intelligence.attractions?.[0] ? (
             <Pill>{intelligence.attractions[0].name}</Pill>
@@ -217,9 +227,7 @@ const initialTravelWindows: PlanningWindow[] = [
     dates: "22-25 May 2026",
     start_date: "2026-05-22",
     end_date: "2026-05-25",
-    linked_holiday: "Spring bank holiday",
     status: "candidate",
-    notes: "Warm long weekend with food and relaxed neighborhoods.",
   },
   {
     id: "august",
@@ -227,9 +235,7 @@ const initialTravelWindows: PlanningWindow[] = [
     dates: "28-31 Aug 2026",
     start_date: "2026-08-28",
     end_date: "2026-08-31",
-    linked_holiday: "Summer bank holiday",
     status: "candidate",
-    notes: "Long daylight, harbor walks, and easy solo dinners.",
   },
   {
     id: "christmas",
@@ -237,9 +243,7 @@ const initialTravelWindows: PlanningWindow[] = [
     dates: "24-28 Dec 2026",
     start_date: "2026-12-24",
     end_date: "2026-12-28",
-    linked_holiday: "Christmas Day",
     status: "candidate",
-    notes: "Seasonal markets, museums, and atmospheric evenings.",
   },
 ];
 
@@ -290,24 +294,10 @@ function dateRangeFromTravelRange(range: DraftRange | TravelWindow | null): Date
   };
 }
 
-function isWithinRange(date: string, startDate: string, endDate: string): boolean {
-  return date >= startDate && date <= endDate;
-}
-
 function orderedRange(firstDate: string, secondDate: string): DraftRange {
   return firstDate <= secondDate
     ? { start_date: firstDate, end_date: secondDate }
     : { start_date: secondDate, end_date: firstDate };
-}
-
-function linkedHolidayForRange(range: DraftRange): string | null {
-  if (isWithinRange("2026-05-25", range.start_date, range.end_date)) {
-    return "Spring bank holiday";
-  }
-  if (isWithinRange("2026-05-04", range.start_date, range.end_date)) {
-    return "Early May bank holiday";
-  }
-  return null;
 }
 
 function planningWindowFromDraft(range: DraftRange, existingWindows: PlanningWindow[]): PlanningWindow {
@@ -328,9 +318,7 @@ function planningWindowFromDraft(range: DraftRange, existingWindows: PlanningWin
     dates,
     start_date: range.start_date,
     end_date: range.end_date,
-    linked_holiday: linkedHolidayForRange(range),
     status: "candidate",
-    notes: "New candidate range.",
   };
 }
 
@@ -376,7 +364,6 @@ export default function Page() {
     rangePageIndex * rangePageSize + rangePageSize,
   );
   const activeRange = draftRange ?? selectedTravelWindow;
-  const pace = activeRange ? inferPaceFromRange(activeRange) : null;
   const activeGroup = selectedTravelWindowId
     ? groups.find((group) => group.travel_window.id === selectedTravelWindowId)
     : undefined;
@@ -550,19 +537,9 @@ export default function Page() {
             label: targetWindow.label,
             start_date: targetWindow.start_date,
             end_date: targetWindow.end_date,
-            linked_holiday: targetWindow.linked_holiday,
             status: targetWindow.status,
-            notes: targetWindow.notes,
           },
         ],
-        preferences: {
-          pace: inferPaceFromRange(targetWindow),
-          climate: "warm",
-          budget_sensitivity: 3,
-          popularity: "mix",
-          interests: { food: 5, history: 3, museums: 2, nature: 2, architecture: 4 },
-        },
-        excluded_destination_ids: [],
       });
       setLoadingStepIndex(6);
       const activeWindow = results.find((group) => group.travel_window.id === targetWindow.id)
@@ -703,6 +680,7 @@ export default function Page() {
         </div>
         <div className="row">
           <Pill>Home city: {homeCity}</Pill>
+          <AuthButton />
           <Button type="button">
             Save planner
           </Button>
@@ -795,11 +773,9 @@ export default function Page() {
                     >
                       <span>
                         <strong>{window.dates}</strong>
-                        <small>{window.notes}</small>
                       </span>
                       <span>
                         <Pill>{window.status}</Pill>
-                        {window.linked_holiday ? <Pill>{window.linked_holiday}</Pill> : null}
                       </span>
                     </Button>
                     {editingWindowId === window.id ? (
@@ -885,16 +861,9 @@ export default function Page() {
 
           <Card className="card stack">
             <CardHeader>
-              <CardTitle>Preference lens</CardTitle>
+              <CardTitle>Search area</CardTitle>
             </CardHeader>
             <CardContent className="stack">
-            <div className="badge-row">
-              <Pill>
-                {pace ? `${pace[0].toUpperCase() + pace.slice(1)} pace` : "Choose a range"}
-              </Pill>
-              <Pill>Warm</Pill>
-              <Pill>Food</Pill>
-            </div>
             <div className="field-stack">
               <Label htmlFor="search-radius">Search radius: {radiusKm} km</Label>
               <Slider
@@ -919,7 +888,6 @@ export default function Page() {
                 onChange={(event) => setMinPopulation(Number(event.target.value))}
               />
             </div>
-            <p className="muted">Excluded: Paris, Amsterdam, Barcelona</p>
             <Button
               type="button"
               disabled={!activeRange || status === "loading"}

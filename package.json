@@ -5,10 +5,12 @@
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "dev:web": "corepack pnpm --filter @solo/web dev",
-    "dev:api": "cd apps/api && python -m uvicorn solo_api.main:app --host localhost --port 45655",
+    "dev:api": "cd apps/api && .venv/bin/python -m uvicorn solo_api.main:app --host localhost --port 45655",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down",
     "test": "corepack pnpm test:web && corepack pnpm test:api",
     "test:web": "corepack pnpm --filter @solo/web test -- --run",
-    "test:api": "cd apps/api && .venv\\Scripts\\python.exe -m pytest -o cache_dir=C:\\tmp\\solo-pytest-cache",
+    "test:api": "cd apps/api && .venv/bin/python -m pytest",
     "lint:web": "corepack pnpm --filter @solo/web lint"
   }
 }
