@@ -87,6 +87,8 @@ def test_fetch_climate_summary_uses_open_meteo(monkeypatch):
             {
                 "daily": {
                     "temperature_2m_mean": [22.0, 24.0],
+                    "temperature_2m_min": [16.0, 18.0],
+                    "temperature_2m_max": [27.0, 29.0],
                     "precipitation_sum": [1.0, 3.0],
                     "sunshine_duration": [3600.0, 7200.0],
                 }
@@ -103,9 +105,13 @@ def test_fetch_climate_summary_uses_open_meteo(monkeypatch):
     )
 
     assert summary.average_temperature_c == 23.0
+    assert summary.average_temperature_min_c == 17.0
+    assert summary.average_temperature_max_c == 28.0
     assert summary.precipitation_mm == 4.0
     assert summary.sunshine_hours == 3.0
     assert calls[0][0] == "https://archive-api.open-meteo.com/v1/archive"
+    assert "temperature_2m_min" in calls[0][1]["daily"]
+    assert "temperature_2m_max" in calls[0][1]["daily"]
 
 
 def test_historical_archive_window_shifts_future_dates_to_previous_year():
@@ -256,7 +262,7 @@ def test_cost_of_living_returns_unavailable_summary():
 
 def test_destination_intelligence_endpoint_aggregates_sources(monkeypatch):
     monkeypatch.setattr(
-        "solo_api.destination_intelligence.fetch_climate_summary",
+        "solo_api.destination_intelligence.fetch_month_climate_summary",
         lambda **kwargs: ClimateSummary(
             average_temperature_c=23.0,
             precipitation_mm=4.0,
@@ -306,7 +312,7 @@ def test_destination_intelligence_endpoint_reports_failing_service(monkeypatch):
     def broken_climate(**kwargs):
         raise httpx.TimeoutException("timed out while contacting Open-Meteo")
 
-    monkeypatch.setattr("solo_api.destination_intelligence.fetch_climate_summary", broken_climate)
+    monkeypatch.setattr("solo_api.destination_intelligence.fetch_month_climate_summary", broken_climate)
     try:
         build_destination_intelligence(
             DestinationIntelligenceRequest(
@@ -334,7 +340,7 @@ def test_destination_intelligence_keeps_partial_result_when_attractions_timeout(
     INTELLIGENCE_CACHE._values.clear()
 
     monkeypatch.setattr(
-        "solo_api.destination_intelligence.fetch_climate_summary",
+        "solo_api.destination_intelligence.fetch_month_climate_summary",
         lambda **kwargs: ClimateSummary(
             average_temperature_c=20.0,
             precipitation_mm=3.0,
@@ -440,7 +446,7 @@ def test_destination_intelligence_does_not_cache_partial_warning_results(monkeyp
     calls = {"attractions": 0}
 
     monkeypatch.setattr(
-        "solo_api.destination_intelligence.fetch_climate_summary",
+        "solo_api.destination_intelligence.fetch_month_climate_summary",
         lambda **kwargs: ClimateSummary(
             average_temperature_c=18.0,
             precipitation_mm=4.0,
@@ -503,7 +509,7 @@ def test_destination_intelligence_uses_cache(monkeypatch):
             summary="Cached weather.",
         )
 
-    monkeypatch.setattr("solo_api.destination_intelligence.fetch_climate_summary", fake_climate)
+    monkeypatch.setattr("solo_api.destination_intelligence.fetch_month_climate_summary", fake_climate)
     monkeypatch.setattr("solo_api.destination_intelligence.fetch_attractions", lambda **kwargs: [])
     monkeypatch.setattr(
         "solo_api.destination_intelligence.summarize_hotel_prices",
@@ -530,3 +536,58 @@ def test_destination_intelligence_uses_cache(monkeypatch):
 
     assert first == second
     assert calls["climate"] == 1
+
+
+def test_destination_intelligence_writes_to_shared_cache(monkeypatch):
+    from solo_api.destination_intelligence import INTELLIGENCE_CACHE, build_destination_intelligence
+
+    INTELLIGENCE_CACHE._values.clear()
+    writes = []
+
+    monkeypatch.setattr(
+        "solo_api.destination_intelligence.get_api_cache",
+        lambda key: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "solo_api.destination_intelligence.set_api_cache",
+        lambda key, payload, ttl_seconds, provider: writes.append(
+            (key, payload, ttl_seconds, provider)
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "solo_api.destination_intelligence.fetch_month_climate_summary",
+        lambda **kwargs: ClimateSummary(
+            average_temperature_c=19.0,
+            precipitation_mm=1.0,
+            sunshine_hours=4.0,
+            summary="Cached weather.",
+        ),
+    )
+    monkeypatch.setattr("solo_api.destination_intelligence.fetch_attractions", lambda **kwargs: [])
+    monkeypatch.setattr(
+        "solo_api.destination_intelligence.summarize_hotel_prices",
+        lambda **kwargs: HotelPriceSummary(
+            average_nightly_price=None,
+            median_nightly_price=None,
+            currency=None,
+            sample_size=0,
+            status="unavailable",
+        ),
+    )
+
+    build_destination_intelligence(
+        DestinationIntelligenceRequest(
+            destination_city="Cacheville",
+            country="Portugal",
+            latitude=38.0,
+            longitude=-9.0,
+            start_date=date(2026, 5, 22),
+            end_date=date(2026, 5, 25),
+        )
+    )
+
+    assert writes
+    assert writes[0][0].startswith("destination_intelligence:")
+    assert writes[0][3] == "destination_intelligence"

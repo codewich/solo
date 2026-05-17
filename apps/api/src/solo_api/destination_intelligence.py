@@ -1,5 +1,7 @@
 import hashlib
+from collections import defaultdict
 from collections.abc import Callable
+from datetime import date, timedelta
 from typing import TypeVar
 
 from solo_api.attractions import AttractionLookupError, fetch_attractions
@@ -11,9 +13,20 @@ from solo_api.models import (
     DestinationIntelligenceRequest,
     DestinationIntelligenceWarning,
 )
-from solo_api.weather import fetch_climate_summary
+from solo_api.storage import (
+    get_api_cache,
+    get_climate_normal,
+    get_stored_attractions,
+    set_api_cache,
+    store_attractions,
+    store_climate_normal,
+)
+from solo_api.weather import fetch_month_climate_summary
 
-INTELLIGENCE_CACHE: TtlCache[DestinationIntelligence] = TtlCache(ttl_seconds=60 * 60 * 6)
+INTELLIGENCE_CACHE_TTL_SECONDS = 60 * 60 * 6
+INTELLIGENCE_CACHE: TtlCache[DestinationIntelligence] = TtlCache(
+    ttl_seconds=INTELLIGENCE_CACHE_TTL_SECONDS
+)
 
 CITY_CODES = {
     ("Lisbon", "Portugal"): "LIS",
@@ -50,6 +63,21 @@ def _cache_key(request: DestinationIntelligenceRequest) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _shared_cache_key(local_key: str) -> str:
+    return f"destination_intelligence:{local_key}"
+
+
+def _dominant_month(start_date: date, end_date: date) -> int:
+    coverage: dict[int, int] = defaultdict(int)
+    last_seen: dict[int, date] = {}
+    current = start_date
+    while current <= end_date:
+        coverage[current.month] += 1
+        last_seen[current.month] = current
+        current += timedelta(days=1)
+    return max(coverage, key=lambda month: (coverage[month], last_seen[month]))
+
+
 def _run_step(*, step: str, service: str, action: Callable[[], T]) -> T:
     try:
         return action()
@@ -77,38 +105,65 @@ def build_destination_intelligence(
     if cached is not None:
         return cached
 
+    shared_key = _shared_cache_key(key)
+    cached_payload = get_api_cache(shared_key)
+    if cached_payload is not None:
+        intelligence = DestinationIntelligence.model_validate(cached_payload)
+        INTELLIGENCE_CACHE.set(key, intelligence)
+        return intelligence
+
     city_code = CITY_CODES.get(
         (request.destination_city, request.country),
         request.destination_city[:3].upper(),
     )
     warnings: list[DestinationIntelligenceWarning] = []
+    climate_month = _dominant_month(request.start_date, request.end_date)
     try:
-        attractions = _run_step(
-            step="attractions",
-            service="OpenStreetMap/Wikipedia",
-            action=lambda: fetch_attractions(
-                latitude=request.latitude,
-                longitude=request.longitude,
-                city=request.destination_city,
-            ),
-        )
+        attractions = get_stored_attractions(request.city_id) if request.city_id else []
+        if not attractions:
+            attractions = _run_step(
+                step="attractions",
+                service="OpenStreetMap/Wikipedia",
+                action=lambda: fetch_attractions(
+                    latitude=request.latitude,
+                    longitude=request.longitude,
+                    city=request.destination_city,
+                ),
+            )
+            if request.city_id:
+                store_attractions(city_id=request.city_id, attractions=attractions)
     except DestinationIntelligenceStepError as error:
         attractions = []
         warnings.append(_warning_from_error(error))
 
+    climate = (
+        get_climate_normal(city_id=request.city_id, month=climate_month)
+        if request.city_id
+        else None
+    )
+    if climate is None:
+        climate = _run_step(
+            step="climate",
+            service="Open-Meteo",
+            action=lambda: fetch_month_climate_summary(
+                latitude=request.latitude,
+                longitude=request.longitude,
+                year=request.start_date.year,
+                month=climate_month,
+            ),
+        )
+        if request.city_id:
+            store_climate_normal(
+                city_id=request.city_id,
+                month=climate_month,
+                climate=climate,
+                source=climate.source,
+            )
+
     intelligence = DestinationIntelligence(
         destination_city=request.destination_city,
         country=request.country,
-        climate=_run_step(
-            step="climate",
-            service="Open-Meteo",
-            action=lambda: fetch_climate_summary(
-                latitude=request.latitude,
-                longitude=request.longitude,
-                start_date=request.start_date,
-                end_date=request.end_date,
-            ),
-        ),
+        climate=climate,
         attractions=attractions,
         hotels=_run_step(
             step="hotels",
@@ -128,4 +183,10 @@ def build_destination_intelligence(
     )
     if not warnings:
         INTELLIGENCE_CACHE.set(key, intelligence)
+        set_api_cache(
+            key=shared_key,
+            payload=intelligence.model_dump(mode="json"),
+            ttl_seconds=INTELLIGENCE_CACHE_TTL_SECONDS,
+            provider="destination_intelligence",
+        )
     return intelligence

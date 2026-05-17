@@ -51,6 +51,15 @@ export type Recommendation = {
   summary?: string | null;
   image_url?: string | null;
   imageUrl?: string | null;
+  climate?: {
+    average_temperature_c: number | null;
+    average_temperature_min_c?: number | null;
+    average_temperature_max_c?: number | null;
+    precipitation_mm: number | null;
+    sunshine_hours: number | null;
+    summary: string;
+    source: string;
+  } | null;
   air_quality?: {
     pm25?: number | null;
     pm10?: number | null;
@@ -95,6 +104,7 @@ export type HomeLocation = Coordinates & {
 };
 
 export type DestinationIntelligenceRequest = {
+  city_id?: string;
   destination_city: string;
   country: string;
   latitude: number;
@@ -108,6 +118,8 @@ export type DestinationIntelligence = {
   country: string;
   climate: {
     average_temperature_c: number | null;
+    average_temperature_min_c?: number | null;
+    average_temperature_max_c?: number | null;
     precipitation_mm: number | null;
     sunshine_hours: number | null;
     summary: string;

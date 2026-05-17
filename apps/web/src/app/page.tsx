@@ -98,6 +98,26 @@ function DestinationCard({
   const imageUrl = item.image_url ?? item.imageUrl;
   const attractionCount = item.attraction_count ?? item.attractionCount;
   const airQuality = item.air_quality ?? item.airQuality;
+  const climate = item.climate ?? intelligence?.climate;
+  const temperatureRange =
+    climate?.average_temperature_min_c !== null &&
+    climate?.average_temperature_min_c !== undefined &&
+    climate?.average_temperature_max_c !== null &&
+    climate?.average_temperature_max_c !== undefined
+      ? `${Math.round(climate.average_temperature_min_c)}-${Math.round(
+          climate.average_temperature_max_c,
+        )}C`
+      : climate?.average_temperature_c !== null && climate?.average_temperature_c !== undefined
+        ? `${Math.round(climate.average_temperature_c)}C avg`
+        : null;
+  const rainfall =
+    climate?.precipitation_mm !== null && climate?.precipitation_mm !== undefined
+      ? `${Math.round(climate.precipitation_mm)} mm rain`
+      : null;
+  const sunshine =
+    climate?.sunshine_hours !== null && climate?.sunshine_hours !== undefined
+      ? `${Math.round(climate.sunshine_hours)} h sun`
+      : null;
   const cardStyle = imageUrl
     ? {
         backgroundImage: `linear-gradient(rgba(23, 33, 29, 0.72), rgba(23, 33, 29, 0.72)), url(${imageUrl})`,
@@ -180,6 +200,16 @@ function DestinationCard({
         <Pill>walkable</Pill>
         {attractionCount !== undefined ? <Pill>{attractionCount} attractions nearby</Pill> : null}
       </div>
+      {climate ? (
+        <div className="climate-summary">
+          <div className="badge-row">
+            {temperatureRange ? <Pill>{temperatureRange}</Pill> : null}
+            {rainfall ? <Pill>{rainfall}</Pill> : null}
+            {sunshine ? <Pill>{sunshine}</Pill> : null}
+          </div>
+          <p className="muted">{climate.summary}</p>
+        </div>
+      ) : null}
       {airQuality?.summary ? <p className="muted">{airQuality.summary}</p> : null}
       {isIntelligenceLoading ? (
         <div
@@ -193,10 +223,6 @@ function DestinationCard({
       ) : null}
       {intelligence ? (
         <div className="destination-intelligence">
-          {intelligence.climate?.average_temperature_c !== null &&
-          intelligence.climate?.average_temperature_c !== undefined ? (
-            <Pill>Climate data available</Pill>
-          ) : null}
           {intelligence.attractions?.[0] ? (
             <Pill>{intelligence.attractions[0].name}</Pill>
           ) : null}
@@ -443,6 +469,7 @@ export default function Page() {
 
       try {
         const intelligence = await fetchDestinationIntelligence({
+          city_id: item.destination.id,
           destination_city: item.destination.city,
           country: item.destination.country,
           latitude: item.destination.latitude,

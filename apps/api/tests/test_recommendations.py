@@ -174,6 +174,77 @@ def test_recommendations_include_live_score_breakdown(monkeypatch):
     assert first.image_url == "https://images.example/lisbon.jpg"
     assert first.air_quality is not None
     assert first.air_quality.status == "available"
+    assert first.climate is not None
+    assert first.climate.average_temperature_c == 23
+    assert first.climate.summary == "Mild and bright."
+
+
+def test_recommendations_store_climate_normals(monkeypatch):
+    stub_live_signals(monkeypatch)
+    stub_city_candidates(monkeypatch)
+    stored = []
+    monkeypatch.setattr(
+        "solo_api.recommendations.store_climate_normal",
+        lambda **kwargs: stored.append(kwargs),
+    )
+
+    recommend_destinations(
+        RecommendationRequest(
+            home_city="London",
+            travel_windows=[
+                TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25))
+            ],
+        )
+    )
+
+    assert stored
+    assert stored[0]["city_id"] == "lisbon-pt"
+    assert stored[0]["month"] == 5
+    assert stored[0]["climate"].average_temperature_c == 22
+
+
+def test_recommendations_use_later_month_when_window_month_coverage_ties(monkeypatch):
+    stub_live_signals(monkeypatch)
+    stub_city_candidates(monkeypatch)
+    stored = []
+    monkeypatch.setattr(
+        "solo_api.recommendations.store_climate_normal",
+        lambda **kwargs: stored.append(kwargs),
+    )
+
+    recommend_destinations(
+        RecommendationRequest(
+            home_city="London",
+            travel_windows=[
+                TravelWindow(id="split", start_date=date(2026, 5, 31), end_date=date(2026, 6, 1))
+            ],
+        )
+    )
+
+    assert stored
+    assert stored[0]["month"] == 6
+
+
+def test_recommendations_use_last_calendar_month_for_december_january_tie(monkeypatch):
+    stub_live_signals(monkeypatch)
+    stub_city_candidates(monkeypatch)
+    stored = []
+    monkeypatch.setattr(
+        "solo_api.recommendations.store_climate_normal",
+        lambda **kwargs: stored.append(kwargs),
+    )
+
+    recommend_destinations(
+        RecommendationRequest(
+            home_city="London",
+            travel_windows=[
+                TravelWindow(id="new-year", start_date=date(2026, 12, 31), end_date=date(2027, 1, 1))
+            ],
+        )
+    )
+
+    assert stored
+    assert stored[0]["month"] == 1
 
 
 def test_destination_signals_are_cached(monkeypatch):
@@ -189,9 +260,12 @@ def test_destination_signals_are_cached(monkeypatch):
             summary="Cached climate.",
         )
 
-    def fake_attraction_count(**kwargs):
+    def fake_attractions(**kwargs):
         calls["attractions"] += 1
-        return 8
+        return [
+            AttractionSummary(name=f"Attraction {index}", category="museum", source="OpenStreetMap")
+            for index in range(8)
+        ]
 
     def fake_summary(city):
         calls["summary"] += 1
@@ -212,8 +286,12 @@ def test_destination_signals_are_cached(monkeypatch):
             status="available",
         )
 
-    monkeypatch.setattr("solo_api.recommendation_signals.fetch_climate_summary", fake_climate)
-    monkeypatch.setattr("solo_api.recommendation_signals.count_attractions", fake_attraction_count)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_month_climate_summary", fake_climate)
+    monkeypatch.setattr("solo_api.recommendation_signals.get_climate_normal", lambda **kwargs: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.store_climate_normal", lambda **kwargs: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: [])
+    monkeypatch.setattr("solo_api.recommendation_signals.store_attractions", lambda **kwargs: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", fake_attractions)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", fake_summary)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", fake_image)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_air_quality_summary", fake_air_quality)
@@ -228,14 +306,202 @@ def test_destination_signals_are_cached(monkeypatch):
     assert calls == {"climate": 1, "attractions": 1, "summary": 1, "image": 1, "air_quality": 1}
 
 
+def test_destination_signals_write_to_shared_cache(monkeypatch):
+    SIGNAL_CACHE._values.clear()
+    writes = []
+
+    monkeypatch.setattr("solo_api.recommendation_signals.get_api_cache", lambda key: None, raising=False)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.set_api_cache",
+        lambda key, payload, ttl_seconds, provider: writes.append(
+            (key, payload, ttl_seconds, provider)
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.fetch_month_climate_summary",
+        lambda **kwargs: ClimateSummary(
+            average_temperature_c=21,
+            precipitation_mm=1,
+            sunshine_hours=6,
+            summary="Cached climate.",
+        ),
+    )
+    monkeypatch.setattr("solo_api.recommendation_signals.get_climate_normal", lambda **kwargs: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.store_climate_normal", lambda **kwargs: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: [])
+    monkeypatch.setattr("solo_api.recommendation_signals.store_attractions", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.fetch_attractions",
+        lambda **kwargs: [
+            AttractionSummary(name=f"Attraction {index}", category="museum", source="OpenStreetMap")
+            for index in range(8)
+        ],
+    )
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.fetch_air_quality_summary",
+        lambda **kwargs: AirQualitySummary(
+            pm25=9.0,
+            pm10=None,
+            no2=None,
+            summary="Good air quality.",
+            source="OpenAQ",
+            status="available",
+        ),
+    )
+
+    get_destination_signals(
+        city(),
+        TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25)),
+    )
+
+    assert writes
+    assert writes[0][0].startswith("destination_signals:")
+    assert writes[0][3] == "destination_signals"
+
+
+def test_destination_signals_reads_monthly_climate_from_storage(monkeypatch):
+    SIGNAL_CACHE._values.clear()
+    stored_climate = ClimateSummary(
+        average_temperature_c=21,
+        average_temperature_min_c=16,
+        average_temperature_max_c=26,
+        precipitation_mm=2,
+        sunshine_hours=8,
+        summary="Stored monthly climate.",
+    )
+
+    monkeypatch.setattr("solo_api.recommendation_signals.get_api_cache", lambda key: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.set_api_cache", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.get_climate_normal",
+        lambda **kwargs: stored_climate,
+    )
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.fetch_month_climate_summary",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("should not fetch climate")),
+    )
+    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: [])
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", lambda **kwargs: [])
+    monkeypatch.setattr("solo_api.recommendation_signals.store_attractions", lambda **kwargs: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.fetch_air_quality_summary",
+        lambda **kwargs: AirQualitySummary(
+            summary="Good air quality.",
+            source="OpenAQ",
+            status="available",
+        ),
+    )
+
+    signals = get_destination_signals(
+        city(),
+        TravelWindow(id="june", start_date=date(2026, 5, 31), end_date=date(2026, 6, 2)),
+    )
+
+    assert signals.climate == stored_climate
+
+
+def test_destination_signals_store_fetched_attractions(monkeypatch):
+    SIGNAL_CACHE._values.clear()
+    stored = []
+    attractions = [
+        AttractionSummary(name="Museum", category="museum", source="OpenStreetMap"),
+        AttractionSummary(name="Viewpoint", category="viewpoint", source="OpenStreetMap"),
+    ]
+
+    monkeypatch.setattr("solo_api.recommendation_signals.get_api_cache", lambda key: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.set_api_cache", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.get_climate_normal",
+        lambda **kwargs: ClimateSummary(
+            average_temperature_c=21,
+            precipitation_mm=1,
+            sunshine_hours=6,
+            summary="Stored climate.",
+        ),
+    )
+    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: [])
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", lambda **kwargs: attractions)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.store_attractions",
+        lambda **kwargs: stored.append(kwargs),
+    )
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.fetch_air_quality_summary",
+        lambda **kwargs: AirQualitySummary(
+            summary="Good air quality.",
+            source="OpenAQ",
+            status="available",
+        ),
+    )
+
+    signals = get_destination_signals(
+        city(),
+        TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25)),
+    )
+
+    assert signals.attraction_count == 2
+    assert stored == [{"city_id": "lisbon-pt", "attractions": attractions}]
+
+
+def test_destination_signals_read_stored_attractions(monkeypatch):
+    SIGNAL_CACHE._values.clear()
+    attractions = [
+        AttractionSummary(name="Museum", category="museum", source="OpenStreetMap"),
+        AttractionSummary(name="Viewpoint", category="viewpoint", source="OpenStreetMap"),
+    ]
+
+    monkeypatch.setattr("solo_api.recommendation_signals.get_api_cache", lambda key: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.set_api_cache", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.get_climate_normal",
+        lambda **kwargs: ClimateSummary(
+            average_temperature_c=21,
+            precipitation_mm=1,
+            sunshine_hours=6,
+            summary="Stored climate.",
+        ),
+    )
+    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: attractions)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.fetch_attractions",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("should not fetch attractions")),
+    )
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.fetch_air_quality_summary",
+        lambda **kwargs: AirQualitySummary(
+            summary="Good air quality.",
+            source="OpenAQ",
+            status="available",
+        ),
+    )
+
+    signals = get_destination_signals(
+        city(),
+        TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25)),
+    )
+
+    assert signals.attraction_count == 2
+
+
 def test_destination_signals_fall_back_with_warning(monkeypatch):
     SIGNAL_CACHE._values.clear()
 
     def broken_climate(**kwargs):
         raise RuntimeError("weather down")
 
-    monkeypatch.setattr("solo_api.recommendation_signals.fetch_climate_summary", broken_climate)
-    monkeypatch.setattr("solo_api.recommendation_signals.count_attractions", lambda **kwargs: 0)
+    monkeypatch.setattr("solo_api.recommendation_signals.get_climate_normal", lambda **kwargs: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_month_climate_summary", broken_climate)
+    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: [])
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", lambda **kwargs: [])
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
     monkeypatch.setattr(

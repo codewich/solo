@@ -37,6 +37,15 @@ describe("Solo homepage", () => {
                   },
                   attraction_count: 7,
                   image_url: "https://images.example/lisbon.jpg",
+                  climate: {
+                    average_temperature_c: 23,
+                    average_temperature_min_c: 17,
+                    average_temperature_max_c: 28,
+                    precipitation_mm: 4,
+                    sunshine_hours: 3,
+                    summary: "Average historical temperature is about 23C for this window.",
+                    source: "Open-Meteo",
+                  },
                   air_quality: {
                     pm25: 8,
                     pm10: 14,
@@ -148,6 +157,12 @@ describe("Solo homepage", () => {
     expect(screen.getByLabelText("Score breakdown for Lisbon")).toHaveTextContent("Climate: 35");
     expect(screen.getByLabelText("Score breakdown for Lisbon")).toHaveTextContent("Air: 8");
     expect(screen.getByText("7 attractions nearby")).toBeInTheDocument();
+    expect(screen.getByText("17-28C")).toBeInTheDocument();
+    expect(screen.getByText("4 mm rain")).toBeInTheDocument();
+    expect(screen.getByText("3 h sun")).toBeInTheDocument();
+    expect(
+      screen.getByText("Average historical temperature is about 23C for this window."),
+    ).toBeInTheDocument();
     expect(screen.getByText("Good air quality.")).toBeInTheDocument();
     expect(screen.getByText("Lisbon, Portugal").closest(".card")).toHaveStyle({
       backgroundImage: "linear-gradient(rgba(23, 33, 29, 0.72), rgba(23, 33, 29, 0.72)), url(https://images.example/lisbon.jpg)",
@@ -401,11 +416,22 @@ describe("Solo homepage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Climate data available")).toBeInTheDocument();
+      expect(
+        screen.getByText("Average historical temperature is about 23C for this window."),
+      ).toBeInTheDocument();
     });
+    expect(screen.getByText("23C avg")).toBeInTheDocument();
+    expect(screen.getByText("4 mm rain")).toBeInTheDocument();
+    expect(screen.getByText("9 h sun")).toBeInTheDocument();
     expect(screen.getByText("Belem Tower")).toBeInTheDocument();
     expect(screen.getByText("EUR 118 median hotel")).toBeInTheDocument();
     expect(screen.getByText("Lisbon is moderate for Western Europe.")).toBeInTheDocument();
+    const intelligenceCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("/destination-intelligence"),
+    );
+    expect(JSON.parse(String(intelligenceCall?.[1]?.body))).toEqual(
+      expect.objectContaining({ city_id: "lisbon-pt" }),
+    );
   });
 
   it("lazy-loads intelligence for recommendations after the first three", async () => {
@@ -631,7 +657,9 @@ describe("Solo homepage", () => {
     await waitFor(() => {
       expect(screen.queryByRole("status", { name: "Loading intelligence for Lisbon" })).not.toBeInTheDocument();
     });
-    expect(screen.getByText("Climate data available")).toBeInTheDocument();
+    expect(
+      screen.getByText("Average historical temperature is about 23C for this window."),
+    ).toBeInTheDocument();
   });
 
   it("shows which intelligence service failed without hiding recommendations", async () => {
@@ -771,7 +799,7 @@ describe("Solo homepage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Climate data available")).toBeInTheDocument();
+      expect(screen.getByText("Mild weather.")).toBeInTheDocument();
     });
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Some destination intelligence is unavailable for Metropolitan City of Milan: OpenStreetMap failed during attractions lookup: The read operation timed out",

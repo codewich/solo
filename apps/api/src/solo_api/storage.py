@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from pydantic import TypeAdapter
-
 from solo_api import database
 from solo_api.cache import RedisJsonCache
-from solo_api.models import Destination, RecommendationScoreBreakdown
+from solo_api.config import get_env
+from solo_api.models import AttractionSummary, ClimateSummary, Destination, RecommendationScoreBreakdown
 
-DESTINATION_LIST = TypeAdapter(list[Destination])
-REDIS_CACHE = RedisJsonCache(os.getenv("REDIS_URL"))
+REDIS_CACHE = RedisJsonCache(get_env("REDIS_URL") or get_env("REDIS_KV_URL"))
 
 
 def _json_default(value: Any) -> str:
@@ -69,20 +66,18 @@ def set_api_cache(key: str, payload: Any, ttl_seconds: int, provider: str) -> No
     )
 
 
-def get_cached_cities(key: str) -> list[Destination] | None:
-    payload = get_api_cache(key)
-    if payload is None:
-        return None
-    return DESTINATION_LIST.validate_python(payload)
+def has_imported_city_catalog() -> bool:
+    if not database.is_database_configured():
+        return False
 
-
-def set_cached_cities(key: str, destinations: list[Destination], ttl_seconds: int, provider: str) -> None:
-    set_api_cache(
-        key=key,
-        payload=[destination.model_dump(mode="json") for destination in destinations],
-        ttl_seconds=ttl_seconds,
-        provider=provider,
+    row = database.fetch_one(
+        """
+        select 1
+        from cities
+        limit 1
+        """
     )
+    return row is not None
 
 
 def find_city_candidates(
@@ -172,6 +167,152 @@ def upsert_cities(destinations: list[Destination]) -> None:
                         destination.latitude,
                         destination.longitude,
                         destination.population,
+                    ],
+                )
+        connection.commit()
+
+
+def get_climate_normal(*, city_id: str, month: int, source: str = "Open-Meteo") -> ClimateSummary | None:
+    if not database.is_database_configured():
+        return None
+
+    row = database.fetch_one(
+        """
+        select avg_temp_min, avg_temp_max, rainfall, sunshine_hours, source
+        from climate_normals
+        where city_id = %s
+          and month = %s
+          and source = %s
+        """,
+        [city_id, month, source],
+    )
+    if row is None:
+        return None
+
+    avg_temp_min = row["avg_temp_min"]
+    avg_temp_max = row["avg_temp_max"]
+    average_temperature = None
+    if avg_temp_min is not None and avg_temp_max is not None:
+        average_temperature = round((avg_temp_min + avg_temp_max) / 2, 1)
+
+    summary = "Historical climate data is available for this month."
+    if average_temperature is not None:
+        summary = f"Average historical temperature is about {average_temperature}C for this month."
+
+    return ClimateSummary(
+        average_temperature_c=average_temperature,
+        average_temperature_min_c=avg_temp_min,
+        average_temperature_max_c=avg_temp_max,
+        precipitation_mm=row["rainfall"],
+        sunshine_hours=row["sunshine_hours"],
+        summary=summary,
+        source=row["source"],
+    )
+
+
+def store_climate_normal(
+    *,
+    city_id: str,
+    month: int,
+    climate: ClimateSummary,
+    source: str,
+) -> None:
+    if not database.is_database_configured():
+        return
+    if (
+        climate.average_temperature_c is None
+        and climate.average_temperature_min_c is None
+        and climate.average_temperature_max_c is None
+        and climate.precipitation_mm is None
+        and climate.sunshine_hours is None
+    ):
+        return
+
+    avg_temp_min = (
+        climate.average_temperature_min_c
+        if climate.average_temperature_min_c is not None
+        else climate.average_temperature_c
+    )
+    avg_temp_max = (
+        climate.average_temperature_max_c
+        if climate.average_temperature_max_c is not None
+        else climate.average_temperature_c
+    )
+    database.execute(
+        """
+        insert into climate_normals (
+          city_id, month, avg_temp_min, avg_temp_max, rainfall, sunshine_hours, source
+        )
+        values (%s, %s, %s, %s, %s, %s, %s)
+        on conflict (city_id, month, source) do update set
+          avg_temp_min = excluded.avg_temp_min,
+          avg_temp_max = excluded.avg_temp_max,
+          rainfall = excluded.rainfall,
+          sunshine_hours = excluded.sunshine_hours,
+          updated_at = now()
+        """,
+        [
+            city_id,
+            month,
+            avg_temp_min,
+            avg_temp_max,
+            climate.precipitation_mm,
+            climate.sunshine_hours,
+            source,
+        ],
+    )
+
+
+def get_stored_attractions(city_id: str) -> list[AttractionSummary]:
+    if not database.is_database_configured():
+        return []
+
+    rows = database.fetch_all(
+        """
+        select name, attraction_type as category, latitude, longitude, source, metadata
+        from attractions
+        where city_id = %s
+        order by id
+        limit 12
+        """,
+        [city_id],
+    )
+    return [
+        AttractionSummary(
+            name=row["name"],
+            category=row["category"],
+            latitude=row["latitude"],
+            longitude=row["longitude"],
+            description=(row.get("metadata") or {}).get("description"),
+            source=row["source"],
+        )
+        for row in rows
+    ]
+
+
+def store_attractions(*, city_id: str, attractions: list[AttractionSummary]) -> None:
+    if not database.is_database_configured() or not attractions:
+        return
+
+    with database.connect() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("delete from attractions where city_id = %s", [city_id])
+            for attraction in attractions:
+                cursor.execute(
+                    """
+                    insert into attractions (
+                      city_id, name, latitude, longitude, attraction_type, source, metadata
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s::jsonb)
+                    """,
+                    [
+                        city_id,
+                        attraction.name,
+                        attraction.latitude,
+                        attraction.longitude,
+                        attraction.category,
+                        attraction.source,
+                        json.dumps({"description": attraction.description}, default=_json_default),
                     ],
                 )
         connection.commit()

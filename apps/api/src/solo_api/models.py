@@ -70,6 +70,7 @@ class Recommendation(BaseModel):
     attraction_count: int = Field(default=0, alias="attractionCount")
     summary: str | None = None
     image_url: str | None = Field(default=None, alias="imageUrl")
+    climate: "ClimateSummary | None" = None
     air_quality: "AirQualitySummary | None" = Field(default=None, alias="airQuality")
     warning: str | None = None
 
@@ -98,6 +99,7 @@ class RecommendedDestination(BaseModel):
     attraction_count: int = Field(default=0, alias="attractionCount")
     summary: str | None = None
     image_url: str | None = Field(default=None, alias="imageUrl")
+    climate: "ClimateSummary | None" = None
     air_quality: "AirQualitySummary | None" = Field(default=None, alias="airQuality")
     warning: str | None = None
 
@@ -115,6 +117,7 @@ class CitySuggestion(BaseModel):
 
 
 class DestinationIntelligenceRequest(BaseModel):
+    city_id: str | None = None
     destination_city: str
     country: str
     latitude: float
@@ -131,6 +134,8 @@ class DestinationIntelligenceRequest(BaseModel):
 
 class ClimateSummary(BaseModel):
     average_temperature_c: float | None
+    average_temperature_min_c: float | None = None
+    average_temperature_max_c: float | None = None
     precipitation_mm: float | None
     sunshine_hours: float | None
     summary: str

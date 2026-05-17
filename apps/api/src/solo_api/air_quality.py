@@ -1,7 +1,6 @@
-import os
-
 import httpx
 
+from solo_api.config import get_env
 from solo_api.http import DEFAULT_TIMEOUT, USER_AGENT
 from solo_api.models import AirQualitySummary
 
@@ -11,7 +10,7 @@ OPENAQ_RADIUS_M = 25_000
 
 def _headers() -> dict[str, str]:
     headers = {"User-Agent": USER_AGENT}
-    api_key = os.getenv("OPENAQ_API_KEY")
+    api_key = get_env("OPENAQ_API_KEY")
     if api_key:
         headers["X-API-Key"] = api_key
     return headers

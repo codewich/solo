@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "dev:web": "corepack pnpm --filter @solo/web dev",
-    "dev:api": "cd apps/api && .venv/bin/python -m uvicorn solo_api.main:app --host localhost --port 45655",
+    "dev:api": "set -a; [ -f .env.local ] && . ./.env.local; [ -f .env ] && . ./.env; set +a; export SOLO_LOAD_ENV_FILES=1; cd apps/api && .venv/bin/python -m uvicorn solo_api.main:app --host localhost --port 45655",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
     "test": "corepack pnpm test:web && corepack pnpm test:api",

@@ -1,11 +1,17 @@
-import os
 from collections.abc import Iterable
 from contextlib import contextmanager
 from typing import Any
 
+from solo_api.config import get_env
+
 
 def database_url() -> str | None:
-    return os.getenv("DATABASE_URL")
+    return (
+        get_env("DATABASE_POSTGRES_URL")
+        or get_env("DATABASE_URL")
+        or get_env("DATABASE_POSTGRES_PRISMA_URL")
+        or get_env("DATABASE_POSTGRES_URL_NON_POOLING")
+    )
 
 
 def is_database_configured() -> bool:
@@ -16,7 +22,7 @@ def is_database_configured() -> bool:
 def connect():
     url = database_url()
     if not url:
-        raise RuntimeError("DATABASE_URL is not configured.")
+        raise RuntimeError("DATABASE_POSTGRES_URL or DATABASE_URL is not configured.")
 
     try:
         import psycopg

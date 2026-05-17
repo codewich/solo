@@ -1,3 +1,4 @@
+from calendar import monthrange
 from datetime import date
 
 import httpx
@@ -62,7 +63,10 @@ def fetch_climate_summary(
             "longitude": longitude,
             "start_date": archive_start_date.isoformat(),
             "end_date": archive_end_date.isoformat(),
-            "daily": "temperature_2m_mean,precipitation_sum,sunshine_duration",
+            "daily": (
+                "temperature_2m_mean,temperature_2m_min,temperature_2m_max,"
+                "precipitation_sum,sunshine_duration"
+            ),
             "timezone": "auto",
         },
         timeout=DEFAULT_TIMEOUT,
@@ -71,6 +75,8 @@ def fetch_climate_summary(
     daily = response.json().get("daily", {})
 
     average_temperature = _average(daily.get("temperature_2m_mean", []))
+    average_temperature_min = _average(daily.get("temperature_2m_min", []))
+    average_temperature_max = _average(daily.get("temperature_2m_max", []))
     precipitation = _sum(daily.get("precipitation_sum", []))
     sunshine_hours = _sum(daily.get("sunshine_duration", []), divisor=3600.0)
     summary = "Historical climate data is available for this travel window."
@@ -79,7 +85,24 @@ def fetch_climate_summary(
 
     return ClimateSummary(
         average_temperature_c=average_temperature,
+        average_temperature_min_c=average_temperature_min,
+        average_temperature_max_c=average_temperature_max,
         precipitation_mm=precipitation,
         sunshine_hours=sunshine_hours,
         summary=summary,
+    )
+
+
+def fetch_month_climate_summary(
+    latitude: float,
+    longitude: float,
+    year: int,
+    month: int,
+) -> ClimateSummary:
+    last_day = monthrange(year, month)[1]
+    return fetch_climate_summary(
+        latitude=latitude,
+        longitude=longitude,
+        start_date=date(year, month, 1),
+        end_date=date(year, month, last_day),
     )

@@ -1,5 +1,7 @@
 services:
   postgres:
+    profiles:
+      - local-db
     image: postgis/postgis:16-3.4
     environment:
       POSTGRES_DB: solo
@@ -17,6 +19,8 @@ services:
       retries: 10
 
   redis:
+    profiles:
+      - local-redis
     image: redis:7-alpine
     ports:
       - "6379:6379"
@@ -29,29 +33,26 @@ services:
   api:
     build:
       context: ./apps/api
+    env_file:
+      - path: ./.env.local
+        required: false
     environment:
-      DATABASE_URL: postgresql://solo:solo@postgres:5432/solo
-      REDIS_URL: redis://redis:6379/0
-      GEODB_RAPIDAPI_KEY: ${GEODB_RAPIDAPI_KEY:-}
-      OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}
+      SOLO_LOAD_ENV_FILES: "0"
     ports:
       - "45655:45655"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
 
   web:
     build:
       context: .
       dockerfile: ./apps/web/Dockerfile
+    env_file:
+      - path: ./.env.local
+        required: false
+      - path: ./.env
+        required: false
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:45655
       NEXTAUTH_URL: http://localhost:3000
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     ports:
       - "3000:3000"
     depends_on:

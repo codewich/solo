@@ -15,8 +15,8 @@ from solo_api.models import (
     RecommendedDestination,
     TravelWindow,
 )
-from solo_api.recommendation_signals import DestinationSignals, get_destination_signals
-from solo_api.storage import store_recommendation_score
+from solo_api.recommendation_signals import DestinationSignals, dominant_month, get_destination_signals
+from solo_api.storage import store_climate_normal, store_recommendation_score
 
 DEFAULT_CENTER_LATITUDE = 51.5072
 DEFAULT_CENTER_LONGITUDE = -0.1276
@@ -161,6 +161,12 @@ def _recommendation_for(
     request: RecommendationRequest,
 ) -> Recommendation:
     score, breakdown, reasons, warnings, signals = score_destination(destination, window, request)
+    store_climate_normal(
+        city_id=destination.id,
+        month=dominant_month(window),
+        climate=signals.climate,
+        source=signals.climate.source,
+    )
     store_recommendation_score(
         city_id=destination.id,
         travel_window_id=window.id,
@@ -180,6 +186,7 @@ def _recommendation_for(
         attraction_count=signals.attraction_count,
         summary=signals.summary,
         image_url=signals.image_url,
+        climate=signals.climate,
         air_quality=signals.air_quality,
         warning=" ".join(warnings) if warnings else None,
     )
