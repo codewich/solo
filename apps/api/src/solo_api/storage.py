@@ -14,6 +14,8 @@ from solo_api.models import (
     AttractionSummary,
     ClimateSummary,
     Destination,
+    HolidayRegion,
+    PublicHoliday,
     Recommendation,
     RecommendationScoreBreakdown,
     TravelWindow,
@@ -472,6 +474,171 @@ def set_cached_attractions(
         ttl_seconds=ATTRACTIONS_TTL_SECONDS,
         provider="attractions",
     )
+
+
+def get_cached_holiday_regions(country_code: str) -> list[HolidayRegion]:
+    if not database.is_database_configured():
+        return []
+    rows = database.fetch_all(
+        """
+        select country_code, region_code, name
+        from holiday_regions
+        where provider = 'calendarific'
+          and country_code = %s
+        order by name
+        """,
+        [country_code.upper()],
+    )
+    return [HolidayRegion.model_validate(row) for row in rows]
+
+
+def get_holiday_region_cache_status(country_code: str) -> str | None:
+    if not database.is_database_configured():
+        return None
+    row = database.fetch_one(
+        """
+        select status
+        from holiday_region_cache_status
+        where provider = 'calendarific'
+          and country_code = %s
+        """,
+        [country_code.upper()],
+    )
+    return str(row["status"]) if row else None
+
+
+def set_holiday_region_cache_status(
+    country_code: str,
+    status: str,
+    error_message: str | None = None,
+) -> None:
+    if not database.is_database_configured():
+        return
+    database.execute(
+        """
+        insert into holiday_region_cache_status (
+          provider, country_code, status, error_message
+        )
+        values ('calendarific', %s, %s, %s)
+        on conflict (provider, country_code) do update set
+          status = excluded.status,
+          error_message = excluded.error_message,
+          fetched_at = now(),
+          updated_at = now()
+        """,
+        [country_code.upper(), status, error_message],
+    )
+
+
+def store_holiday_regions(country_code: str, regions: list[HolidayRegion], payload: Any) -> None:
+    if not database.is_database_configured():
+        return
+    with database.connect() as connection:
+        with connection.cursor() as cursor:
+            for region in regions:
+                cursor.execute(
+                    """
+                    insert into holiday_regions (
+                      provider, country_code, region_code, name, payload
+                    )
+                    values ('calendarific', %s, %s, %s, %s::jsonb)
+                    on conflict (provider, country_code, region_code) do update set
+                      name = excluded.name,
+                      payload = excluded.payload,
+                      updated_at = now()
+                    """,
+                    [
+                        country_code.upper(),
+                        region.region_code,
+                        region.name,
+                        json.dumps(payload, default=_json_default),
+                    ],
+                )
+            cursor.execute(
+                """
+                insert into holiday_region_cache_status (
+                  provider, country_code, status, error_message
+                )
+                values ('calendarific', %s, %s, null)
+                on conflict (provider, country_code) do update set
+                  status = excluded.status,
+                  error_message = null,
+                  fetched_at = now(),
+                  updated_at = now()
+                """,
+                [country_code.upper(), "ready" if regions else "empty"],
+            )
+        connection.commit()
+
+
+def get_cached_public_holidays(
+    *,
+    country_code: str,
+    year: int,
+    region_code: str | None = None,
+) -> list[PublicHoliday]:
+    if not database.is_database_configured():
+        return []
+    rows = database.fetch_all(
+        """
+        select holiday_date as date, name, country_code, nullif(region_code, '') as region_code, holiday_type as type
+        from public_holidays
+        where provider = 'calendarific'
+          and country_code = %s
+          and year = %s
+          and region_code = %s
+        order by holiday_date, name
+        """,
+        [country_code.upper(), year, region_code or ""],
+    )
+    return [PublicHoliday.model_validate(row) for row in rows]
+
+
+def store_public_holidays(
+    *,
+    country_code: str,
+    year: int,
+    region_code: str | None,
+    holidays: list[PublicHoliday],
+) -> None:
+    if not database.is_database_configured():
+        return
+    with database.connect() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                delete from public_holidays
+                where provider = 'calendarific'
+                  and country_code = %s
+                  and year = %s
+                  and region_code = %s
+                """,
+                [country_code.upper(), year, region_code or ""],
+            )
+            for holiday in holidays:
+                cursor.execute(
+                    """
+                    insert into public_holidays (
+                      provider, country_code, region_code, year, holiday_date,
+                      name, holiday_type, payload
+                    )
+                    values ('calendarific', %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    on conflict (provider, country_code, region_code, year, holiday_date, name) do update set
+                      holiday_type = excluded.holiday_type,
+                      payload = excluded.payload,
+                      updated_at = now()
+                    """,
+                    [
+                        country_code.upper(),
+                        region_code or "",
+                        year,
+                        holiday.date,
+                        holiday.name,
+                        holiday.type,
+                        json.dumps(holiday.model_dump(mode="json"), default=_json_default),
+                    ],
+                )
+        connection.commit()
 
 
 def store_recommendation_score(

@@ -463,7 +463,26 @@ select:focus-visible {
 
 .calendar-card-header {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+.holiday-region-control {
+  min-width: min(190px, 100%);
+}
+
+.holiday-region-select {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 28px 4px 10px;
+  color: var(--text);
+  background: var(--field);
+  font-size: 0.86rem;
+  font-weight: 800;
 }
 
 .travel-calendar {

@@ -2,7 +2,9 @@ import type {
   CitySuggestion,
   DestinationIntelligence,
   DestinationIntelligenceRequest,
+  HolidayRegion,
   NearestCityRequest,
+  PublicHoliday,
   Recommendation,
   RecommendationGroup,
   RecommendationRequest,
@@ -84,6 +86,43 @@ export async function fetchNearestCity(request: NearestCityRequest): Promise<Cit
 
   if (!response.ok) {
     throw await responseError(response, `Nearest city request failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchHolidayRegions(countryCode: string): Promise<HolidayRegion[]> {
+  const response = await fetch(
+    `${apiBaseUrl}/holidays/regions?country=${encodeURIComponent(countryCode)}`,
+  );
+
+  if (!response.ok) {
+    throw await responseError(response, `Holiday region request failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchPublicHolidays({
+  countryCode,
+  year,
+  regionCode,
+}: {
+  countryCode: string;
+  year: number;
+  regionCode?: string | null;
+}): Promise<PublicHoliday[]> {
+  const params = new URLSearchParams({
+    country: countryCode,
+    year: String(year),
+  });
+  if (regionCode) {
+    params.set("region", regionCode);
+  }
+  const response = await fetch(`${apiBaseUrl}/holidays?${params.toString()}`);
+
+  if (!response.ok) {
+    throw await responseError(response, `Holiday request failed with ${response.status}`);
   }
 
   return response.json();

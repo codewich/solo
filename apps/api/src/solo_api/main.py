@@ -9,13 +9,15 @@ from solo_api.destination_intelligence import (
 )
 from solo_api.geocoding import search_cities
 from solo_api.geocoding import nearest_city as find_nearest_city_suggestion
-from solo_api.holidays import get_bank_holidays
+from solo_api.holidays import CalendarificProviderError, get_bank_holidays, get_holiday_regions
 from solo_api.itineraries import ItineraryRequest, build_itinerary
 from solo_api.models import (
     CitySuggestion,
     DestinationIntelligence,
     DestinationIntelligenceRequest,
+    HolidayRegion,
     NearestCityRequest,
+    PublicHoliday,
     RecommendedDestination,
     RecommendationGroup,
     RecommendationRequest,
@@ -69,9 +71,20 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "solo-api"}
 
 
+@app.get("/holidays/regions")
+def holiday_regions(country: str) -> list[HolidayRegion]:
+    try:
+        return get_holiday_regions(country=country)
+    except CalendarificProviderError as error:
+        raise HTTPException(status_code=502, detail={"message": str(error)}) from error
+
+
 @app.get("/holidays")
-def holidays(country: str = "GB", year: int = 2026) -> list[dict[str, str]]:
-    return get_bank_holidays(country=country, year=year)
+def holidays(country: str = "GB", year: int = 2026, region: str | None = None) -> list[PublicHoliday]:
+    try:
+        return get_bank_holidays(country=country, year=year, region=region)
+    except CalendarificProviderError as error:
+        raise HTTPException(status_code=502, detail={"message": str(error)}) from error
 
 
 @app.get("/geocode/cities")

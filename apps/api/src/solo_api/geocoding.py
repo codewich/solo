@@ -11,6 +11,7 @@ def _suggestion_from_destination(destination) -> CitySuggestion:
         latitude=destination.latitude,
         longitude=destination.longitude,
         timezone=destination.timezone,
+        country_code=destination.country_code,
     )
 
 

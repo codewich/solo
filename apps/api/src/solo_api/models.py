@@ -114,6 +114,21 @@ class CitySuggestion(BaseModel):
     latitude: float
     longitude: float
     timezone: str | None = None
+    country_code: str | None = None
+
+
+class HolidayRegion(BaseModel):
+    country_code: str
+    region_code: str
+    name: str
+
+
+class PublicHoliday(BaseModel):
+    date: date
+    name: str
+    country_code: str
+    region_code: str | None = None
+    type: str | None = None
 
 
 class DestinationIntelligenceRequest(BaseModel):

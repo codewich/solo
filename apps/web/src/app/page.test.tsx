@@ -16,6 +16,7 @@ const lisbon = {
   id: "2267057",
   city: "Lisbon",
   country: "Portugal",
+  country_code: "PT",
   latitude: 38.7223,
   longitude: -9.1393,
   population: 544851,
@@ -25,6 +26,7 @@ const porto = {
   id: "2735943",
   city: "Porto",
   country: "Portugal",
+  country_code: "PT",
   latitude: 41.1579,
   longitude: -8.6291,
   population: 249633,
@@ -34,6 +36,7 @@ const madridSuggestion = {
   id: "3117735",
   name: "Madrid",
   country: "Spain",
+  country_code: "ES",
   latitude: 40.4168,
   longitude: -3.7038,
   timezone: "Europe/Madrid",
@@ -107,6 +110,15 @@ function installSearchFetch(overrides?: {
     }
     if (path.includes("/travel-windows/")) {
       return ok({});
+    }
+    if (path.includes("/holidays/regions")) {
+      return ok([
+        { country_code: "GB", region_code: "gb-eng", name: "England" },
+        { country_code: "GB", region_code: "gb-sct", name: "Scotland" },
+      ]);
+    }
+    if (path.includes("/holidays?")) {
+      return ok([{ date: "2026-05-25", name: "Spring bank holiday", country_code: "GB", region_code: "gb-eng" }]);
     }
     if (path.endsWith("/recommendation-searches/search-1/recommendations")) {
       return overrides?.saved?.() ?? ok([]);
@@ -196,7 +208,30 @@ describe("Solo homepage", () => {
       expect(screen.getByRole("button", { name: /Select Spring bank holiday/ })).toBeInTheDocument();
     });
     await waitFor(() => {
+      expect(screen.getByLabelText("Holiday region")).toHaveValue("gb-eng");
+    });
+    await waitFor(() => {
       expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
+    });
+  });
+
+  it("loads holidays for the visible calendar year and selected region", async () => {
+    const fetchMock = installSearchFetch();
+    render(<Page />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Holiday region")).toHaveValue("gb-eng");
+    });
+    fireEvent.change(screen.getByLabelText("Holiday region"), {
+      target: { value: "gb-sct" },
+    });
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes("/holidays?country=GB&year=2026&region=gb-sct"),
+        ),
+      ).toBe(true);
     });
   });
 

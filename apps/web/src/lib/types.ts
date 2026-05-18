@@ -95,12 +95,28 @@ export type CitySuggestion = Coordinates & {
   country: string;
   admin1?: string | null;
   timezone?: string | null;
+  country_code?: string | null;
 };
 
 export type HomeLocation = Coordinates & {
   city: string;
   country: string;
   admin1?: string | null;
+  country_code?: string | null;
+};
+
+export type HolidayRegion = {
+  country_code: string;
+  region_code: string;
+  name: string;
+};
+
+export type PublicHoliday = {
+  date: string;
+  name: string;
+  country_code: string;
+  region_code?: string | null;
+  type?: string | null;
 };
 
 export type DestinationIntelligenceRequest = {

@@ -27,7 +27,9 @@ import {
   createRecommendationSearch,
   deleteTravelWindow,
   fetchCitySuggestions,
+  fetchHolidayRegions,
   fetchNearestCity,
+  fetchPublicHolidays,
   fetchRecommendationSearchCities,
   fetchRecommendationSearchCityIntelligence,
   fetchSavedRecommendationSearchResults,
@@ -40,7 +42,9 @@ import type {
   CitySuggestion,
   Destination,
   DestinationIntelligence,
+  HolidayRegion,
   HomeLocation,
+  PublicHoliday,
   Recommendation,
   TravelWindow,
 } from "@/lib/types";
@@ -117,16 +121,10 @@ const defaultHomeCity: SelectedCity = {
   admin1: "England",
   latitude: 51.5072,
   longitude: -0.1276,
+  country_code: "GB",
 };
 
 const rangePageSize = 6;
-const gbHolidayDates = new Map([
-  ["2026-05-04", "Early May bank holiday"],
-  ["2026-05-25", "Spring bank holiday"],
-  ["2026-08-31", "Summer bank holiday"],
-  ["2026-12-25", "Christmas Day"],
-  ["2026-12-28", "Boxing Day substitute"],
-]);
 
 function Pill({
   children,
@@ -150,6 +148,7 @@ function cityFromSuggestion(suggestion: CitySuggestion): SelectedCity {
     admin1: suggestion.admin1,
     latitude: suggestion.latitude,
     longitude: suggestion.longitude,
+    country_code: suggestion.country_code,
   };
 }
 
@@ -176,6 +175,15 @@ function dateRangeFromTravelRange(range: DraftRange | TravelWindow | null): Date
     from: isoDateToLocalDate(range.start_date),
     to: isoDateToLocalDate(range.end_date),
   };
+}
+
+function preferredHolidayRegion(regions: HolidayRegion[], admin1?: string | null): string | null {
+  if (regions.length === 0) {
+    return null;
+  }
+  const normalizedAdmin = (admin1 ?? "").trim().toLowerCase();
+  const match = regions.find((region) => region.name.trim().toLowerCase() === normalizedAdmin);
+  return match?.region_code ?? regions[0].region_code;
 }
 
 function orderedRange(firstDate: string, secondDate: string): DraftRange {
@@ -413,6 +421,9 @@ export default function Page() {
   const [excludedCities, setExcludedCities] = useState<CitySuggestion[]>([]);
   const [excludedQuery, setExcludedQuery] = useState("");
   const [excludedSuggestions, setExcludedSuggestions] = useState<CitySuggestion[]>([]);
+  const [holidayRegions, setHolidayRegions] = useState<HolidayRegion[]>([]);
+  const [selectedHolidayRegion, setSelectedHolidayRegion] = useState<string | null>(null);
+  const [publicHolidays, setPublicHolidays] = useState<PublicHoliday[]>([]);
 
   const homeCity = homeLocation.city;
   const isSignedIn = Boolean(session?.user);
@@ -436,10 +447,13 @@ export default function Page() {
     return dateRangeFromTravelRange(activeRange);
   }, [activeRange, draftRange, isDraftComplete]);
   const holidayDates = useMemo(
-    () => Array.from(gbHolidayDates.keys()).map(isoDateToLocalDate),
-    [],
+    () => publicHolidays.map((holiday) => isoDateToLocalDate(holiday.date)),
+    [publicHolidays],
   );
-  const holidayLabels = useMemo(() => Object.fromEntries(gbHolidayDates), []);
+  const holidayLabels = useMemo(
+    () => Object.fromEntries(publicHolidays.map((holiday) => [holiday.date, holiday.name])),
+    [publicHolidays],
+  );
   const sortedCandidateCards = useMemo(
     () =>
       [...candidateCards].sort((left, right) => {
@@ -524,6 +538,68 @@ export default function Page() {
   useEffect(() => {
     setRangePageIndex((currentPage) => Math.min(currentPage, rangePageCount - 1));
   }, [rangePageCount]);
+
+  useEffect(() => {
+    const countryCode = homeLocation.country_code;
+    if (!countryCode) {
+      setHolidayRegions([]);
+      setSelectedHolidayRegion(null);
+      setPublicHolidays([]);
+      return;
+    }
+
+    let isActive = true;
+    fetchHolidayRegions(countryCode)
+      .then((regions) => {
+        if (!isActive) {
+          return;
+        }
+        setHolidayRegions(regions);
+        setSelectedHolidayRegion(preferredHolidayRegion(regions, homeLocation.admin1));
+      })
+      .catch(() => {
+        if (!isActive) {
+          return;
+        }
+        setHolidayRegions([]);
+        setSelectedHolidayRegion(null);
+        showPersistentError("Could not load holiday regions.");
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [homeLocation.admin1, homeLocation.country_code]);
+
+  useEffect(() => {
+    const countryCode = homeLocation.country_code;
+    if (!countryCode) {
+      setPublicHolidays([]);
+      return;
+    }
+
+    let isActive = true;
+    fetchPublicHolidays({
+      countryCode,
+      year: visibleCalendarMonth.getFullYear(),
+      regionCode: selectedHolidayRegion,
+    })
+      .then((holidays) => {
+        if (isActive) {
+          setPublicHolidays(holidays);
+        }
+      })
+      .catch((reason) => {
+        if (isActive) {
+          setPublicHolidays([]);
+          showPersistentError(errorMessage(reason, "Could not load public holidays."));
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [homeLocation.country_code, selectedHolidayRegion, visibleCalendarMonth]);
 
   useEffect(() => {
     const query = homeQuery.trim();
@@ -910,7 +986,24 @@ export default function Page() {
             <Card className="card stack">
               <CardContent className="stack">
                 <div className="calendar-card-header">
-                  <Pill>GB holidays</Pill>
+                  <Pill>Public holidays</Pill>
+                  {holidayRegions.length > 1 ? (
+                    <Label className="holiday-region-control">
+                      <span className="sr-only">Holiday region</span>
+                      <select
+                        aria-label="Holiday region"
+                        className="holiday-region-select"
+                        value={selectedHolidayRegion ?? ""}
+                        onChange={(event) => setSelectedHolidayRegion(event.target.value || null)}
+                      >
+                        {holidayRegions.map((region) => (
+                          <option key={region.region_code} value={region.region_code}>
+                            {region.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Label>
+                  ) : null}
                 </div>
                 <Calendar
                   mode="range"
