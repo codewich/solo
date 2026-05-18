@@ -36,8 +36,6 @@ services:
     env_file:
       - path: ./.env.local
         required: false
-    environment:
-      SOLO_LOAD_ENV_FILES: "0"
     ports:
       - "45655:45655"
 

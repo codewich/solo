@@ -4,12 +4,18 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from solo_api.attraction_service import resolve_city_attractions
-from solo_api.air_quality import fetch_air_quality_summary, unavailable_air_quality_summary
+from solo_api.air_quality import (
+    air_quality_sample_year,
+    fetch_air_quality_summary,
+    unavailable_air_quality_summary,
+)
 from solo_api.attractions import fetch_wikimedia_image, fetch_wikimedia_summary
 from solo_api.cache import TtlCache
 from solo_api.models import AirQualitySummary, ClimateSummary, Destination, TravelWindow
 from solo_api.storage import (
+    get_air_quality_normal,
     get_climate_normal,
+    store_air_quality_normal,
     store_climate_normal,
 )
 from solo_api.weather import fetch_month_climate_summary
@@ -26,7 +32,7 @@ class DestinationSignals:
 
 
 SIGNAL_CACHE_TTL_SECONDS = 60 * 60 * 6
-SIGNAL_CACHE_VERSION = "v3"
+SIGNAL_CACHE_VERSION = "v4"
 SIGNAL_CACHE: TtlCache[DestinationSignals] = TtlCache(ttl_seconds=SIGNAL_CACHE_TTL_SECONDS)
 
 
@@ -121,15 +127,30 @@ def get_destination_signals(destination: Destination, window: TravelWindow) -> D
         warnings.append("Wikimedia unavailable; city image was omitted.")
 
     try:
-        air_quality = fetch_air_quality_summary(
-            latitude=destination.latitude,
-            longitude=destination.longitude,
+        air_quality_year = air_quality_sample_year()
+        air_quality = get_air_quality_normal(
+            city_id=destination.id,
+            year=air_quality_year,
+            month=climate_month,
         )
+        if air_quality is None:
+            air_quality = fetch_air_quality_summary(
+                latitude=destination.latitude,
+                longitude=destination.longitude,
+                year=air_quality_year,
+                month=climate_month,
+            )
+            store_air_quality_normal(
+                city_id=destination.id,
+                year=air_quality_year,
+                month=climate_month,
+                air_quality=air_quality,
+            )
         if air_quality.status == "unavailable":
-            warnings.append("OpenAQ unavailable; air quality score used a neutral fallback.")
+            warnings.append("Open-Meteo air quality unavailable; air quality score used a neutral fallback.")
     except Exception:
         air_quality = unavailable_air_quality_summary()
-        warnings.append("OpenAQ unavailable; air quality score used a neutral fallback.")
+        warnings.append("Open-Meteo air quality unavailable; air quality score used a neutral fallback.")
 
     signals = DestinationSignals(
         climate=climate,

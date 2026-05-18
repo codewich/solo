@@ -1,111 +1,102 @@
+from calendar import monthrange
+from datetime import date
+import logging
+
 import httpx
 
-from solo_api.config import get_env
-from solo_api.http import DEFAULT_TIMEOUT, USER_AGENT
+from solo_api.http import DEFAULT_TIMEOUT
 from solo_api.models import AirQualitySummary
 
-OPENAQ_BASE_URL = "https://api.openaq.org/v3"
-OPENAQ_RADIUS_M = 25_000
+logger = logging.getLogger(__name__)
+
+OPEN_METEO_AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+OPEN_METEO_AIR_QUALITY_HOURLY = "european_aqi,us_aqi,pm2_5,pm10,nitrogen_dioxide"
 
 
-def _headers() -> dict[str, str]:
-    headers = {"User-Agent": USER_AGENT}
-    api_key = get_env("OPENAQ_API_KEY")
-    if api_key:
-        headers["X-API-Key"] = api_key
-    return headers
+def air_quality_sample_year(today: date | None = None) -> int:
+    return (today or date.today()).year - 1
 
 
-def _pollutant_values(results: list[dict], sensor_map: dict[int, str]) -> dict[str, float]:
-    values: dict[str, float] = {}
-    for item in results:
-        sensor_id = item.get("sensorsId")
-        value = item.get("value")
-        if sensor_id in sensor_map and isinstance(value, int | float):
-            param_name = sensor_map[sensor_id]
-            if param_name in {"pm25", "pm10", "no2"}:
-                values[param_name] = float(value)
-    return values
+def _average(values: list[float | int | None]) -> float | None:
+    clean_values = [float(value) for value in values if isinstance(value, int | float)]
+    if not clean_values:
+        return None
+    return round(sum(clean_values) / len(clean_values), 1)
 
 
-def _summary(values: dict[str, float]) -> str:
+def _summary(values: dict[str, float | None], *, year: int, month: int) -> str:
     parts = []
-    if "pm25" in values:
+    if values.get("european_aqi") is not None:
+        parts.append(f"European AQI {values['european_aqi']:.1f}")
+    if values.get("us_aqi") is not None:
+        parts.append(f"US AQI {values['us_aqi']:.1f}")
+    if values.get("pm25") is not None:
         parts.append(f"PM2.5 {values['pm25']:.1f} ug/m3")
-    if "pm10" in values:
-        parts.append(f"PM10 {values['pm10']:.1f} ug/m3")
-    if "no2" in values:
-        parts.append(f"NO2 {values['no2']:.1f} ug/m3")
     if not parts:
-        return "OpenAQ has a nearby station but no PM2.5, PM10, or NO2 reading."
-    return "Latest nearby OpenAQ readings: " + ", ".join(parts) + "."
+        return "Open-Meteo air quality data is unavailable; ranking used a neutral fallback."
+    return (
+        f"Open-Meteo modeled air quality average for {year}-{month:02d}: "
+        + ", ".join(parts)
+        + "."
+    )
 
 
 def unavailable_air_quality_summary() -> AirQualitySummary:
     return AirQualitySummary(
+        european_aqi=None,
+        us_aqi=None,
         pm25=None,
         pm10=None,
         no2=None,
-        summary="Air quality data is unavailable; ranking used a neutral fallback.",
-        source="OpenAQ",
+        summary="Open-Meteo air quality data is unavailable; ranking used a neutral fallback.",
+        source="Open-Meteo",
         status="unavailable",
     )
 
 
-def fetch_air_quality_summary(latitude: float, longitude: float) -> AirQualitySummary:
+def fetch_air_quality_summary(
+    *,
+    latitude: float,
+    longitude: float,
+    year: int,
+    month: int,
+) -> AirQualitySummary:
     try:
-        locations_response = httpx.get(
-            f"{OPENAQ_BASE_URL}/locations",
+        last_day = monthrange(year, month)[1]
+        response = httpx.get(
+            OPEN_METEO_AIR_QUALITY_URL,
             params={
-                "coordinates": f"{latitude:.4f},{longitude:.4f}",
-                "radius": OPENAQ_RADIUS_M,
-                "limit": 1,
+                "latitude": latitude,
+                "longitude": longitude,
+                "start_date": date(year, month, 1).isoformat(),
+                "end_date": date(year, month, last_day).isoformat(),
+                "hourly": OPEN_METEO_AIR_QUALITY_HOURLY,
+                "timezone": "auto",
             },
-            headers=_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
-        locations_response.raise_for_status()
-        locations = locations_response.json().get("results", [])
-        if not locations:
-            return unavailable_air_quality_summary()
-
-        location_id = locations[0].get("id")
-        if not isinstance(location_id, int):
-            return unavailable_air_quality_summary()
-
-        # Get sensor metadata to map sensor IDs to parameter names
-        sensors_response = httpx.get(
-            f"{OPENAQ_BASE_URL}/locations/{location_id}/sensors",
-            headers=_headers(),
-            timeout=DEFAULT_TIMEOUT,
-        )
-        sensors_response.raise_for_status()
-        sensor_map = {}
-        for sensor in sensors_response.json().get("results", []):
-            sensor_id = sensor.get("id")
-            param = sensor.get("parameter", {})
-            param_name = param.get("name")
-            if isinstance(sensor_id, int) and param_name:
-                sensor_map[sensor_id] = param_name
-
-        # Get latest readings
-        latest_response = httpx.get(
-            f"{OPENAQ_BASE_URL}/locations/{location_id}/latest",
-            headers=_headers(),
-            timeout=DEFAULT_TIMEOUT,
-        )
-        latest_response.raise_for_status()
-        values = _pollutant_values(latest_response.json().get("results", []), sensor_map)
-        if not values:
+        response.raise_for_status()
+        hourly = response.json().get("hourly", {})
+        values = {
+            "european_aqi": _average(hourly.get("european_aqi", [])),
+            "us_aqi": _average(hourly.get("us_aqi", [])),
+            "pm25": _average(hourly.get("pm2_5", [])),
+            "pm10": _average(hourly.get("pm10", [])),
+            "no2": _average(hourly.get("nitrogen_dioxide", [])),
+        }
+        if all(value is None for value in values.values()):
             return unavailable_air_quality_summary()
 
         return AirQualitySummary(
-            pm25=values.get("pm25"),
-            pm10=values.get("pm10"),
-            no2=values.get("no2"),
-            summary=_summary(values),
-            source="OpenAQ",
+            european_aqi=values["european_aqi"],
+            us_aqi=values["us_aqi"],
+            pm25=values["pm25"],
+            pm10=values["pm10"],
+            no2=values["no2"],
+            summary=_summary(values, year=year, month=month),
+            source="Open-Meteo",
             status="available",
         )
-    except Exception:
+    except Exception as error:
+        logger.exception("Error fetching Open-Meteo air quality: %s", error)
         return unavailable_air_quality_summary()

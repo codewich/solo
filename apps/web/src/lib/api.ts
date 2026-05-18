@@ -11,6 +11,7 @@ import type {
   RecommendationSearchCity,
   RecommendationSearchCreateRequest,
   RecommendationSearchCreateResponse,
+  TravelWindow,
   TravelWindowDeleteRequest,
 } from "./types";
 
@@ -139,6 +140,28 @@ export async function createRecommendationSearch(
 
   if (!response.ok) {
     throw await responseError(response, `Recommendation search failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchTravelWindows({
+  userEmail,
+  providerSubject,
+}: {
+  userEmail: string;
+  providerSubject?: string | null;
+}): Promise<TravelWindow[]> {
+  const params = new URLSearchParams({
+    user_email: userEmail,
+  });
+  if (providerSubject) {
+    params.set("provider_subject", providerSubject);
+  }
+  const response = await fetch(`${apiBaseUrl}/travel-windows?${params.toString()}`);
+
+  if (!response.ok) {
+    throw await responseError(response, `Travel window request failed with ${response.status}`);
   }
 
   return response.json();

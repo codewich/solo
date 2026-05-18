@@ -62,6 +62,8 @@ export type Recommendation = {
     source: string;
   } | null;
   air_quality?: {
+    european_aqi?: number | null;
+    us_aqi?: number | null;
     pm25?: number | null;
     pm10?: number | null;
     no2?: number | null;
@@ -70,6 +72,8 @@ export type Recommendation = {
     status: "available" | "unavailable";
   } | null;
   airQuality?: {
+    european_aqi?: number | null;
+    us_aqi?: number | null;
     pm25?: number | null;
     pm10?: number | null;
     no2?: number | null;

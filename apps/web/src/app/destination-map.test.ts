@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { buildDefaultMapStyle } from "./destination-map";
 import { DestinationMap } from "./destination-map";
+import { mapViewForHome } from "./destination-map";
 
 describe("DestinationMap city labels", () => {
   it("uses OpenStreetMap raster tiles for zoom-level city labels", () => {
@@ -34,5 +35,12 @@ describe("DestinationMap city labels", () => {
     );
 
     expect(screen.getByLabelText("Search radius 900 km")).toBeInTheDocument();
+  });
+
+  it("centers the map view on the selected home city coordinates", () => {
+    expect(mapViewForHome([-3.7038, 40.4168], 1200)).toEqual({
+      center: [-3.7038, 40.4168],
+      zoom: 4,
+    });
   });
 });

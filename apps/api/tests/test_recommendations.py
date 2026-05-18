@@ -47,7 +47,7 @@ def stub_live_signals(monkeypatch):
                 pm10=14.0,
                 no2=None,
                 summary="Good air quality.",
-                source="OpenAQ",
+                source="Open-Meteo",
                 status="available",
             ),
             "warnings": [],
@@ -140,7 +140,7 @@ def test_recommendations_include_live_score_breakdown(monkeypatch):
                 pm10=12.0,
                 no2=20.0,
                 summary="Good air quality.",
-                source="OpenAQ",
+                source="Open-Meteo",
                 status="available",
             ),
             "warnings": [],
@@ -278,7 +278,7 @@ def test_destination_signals_are_cached(monkeypatch):
             pm10=None,
             no2=None,
             summary="Good air quality.",
-            source="OpenAQ",
+            source="Open-Meteo",
             status="available",
         )
 
@@ -342,7 +342,7 @@ def test_destination_signals_do_not_write_search_scoped_shared_cache(monkeypatch
             pm10=None,
             no2=None,
             summary="Good air quality.",
-            source="OpenAQ",
+            source="Open-Meteo",
             status="available",
         ),
     )
@@ -383,7 +383,7 @@ def test_destination_signals_reads_monthly_climate_from_storage(monkeypatch):
         "solo_api.recommendation_signals.fetch_air_quality_summary",
         lambda **kwargs: AirQualitySummary(
             summary="Good air quality.",
-            source="OpenAQ",
+            source="Open-Meteo",
             status="available",
         ),
     )
@@ -394,6 +394,101 @@ def test_destination_signals_reads_monthly_climate_from_storage(monkeypatch):
     )
 
     assert signals.climate == stored_climate
+
+
+def test_destination_signals_reads_monthly_air_quality_from_storage(monkeypatch):
+    SIGNAL_CACHE._values.clear()
+    stored_air_quality = AirQualitySummary(
+        european_aqi=20,
+        us_aqi=50,
+        pm25=9,
+        pm10=20,
+        no2=25,
+        summary="Stored air quality.",
+        source="Open-Meteo",
+        status="available",
+    )
+
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.get_climate_normal",
+        lambda **kwargs: ClimateSummary(
+            average_temperature_c=21,
+            precipitation_mm=1,
+            sunshine_hours=6,
+            summary="Stored climate.",
+        ),
+    )
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.get_air_quality_normal",
+        lambda **kwargs: stored_air_quality,
+    )
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.fetch_air_quality_summary",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("should not fetch air quality")),
+    )
+    monkeypatch.setattr("solo_api.recommendation_signals.resolve_city_attractions", lambda **kwargs: [])
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
+
+    signals = get_destination_signals(
+        city(id="2988507", name="Paris"),
+        TravelWindow(id="may", start_date=date(2027, 5, 23), end_date=date(2027, 6, 4)),
+    )
+
+    assert signals.air_quality == stored_air_quality
+
+
+def test_destination_signals_stores_monthly_air_quality_after_provider_fetch(monkeypatch):
+    SIGNAL_CACHE._values.clear()
+    fetched_air_quality = AirQualitySummary(
+        european_aqi=20,
+        us_aqi=50,
+        pm25=9,
+        pm10=20,
+        no2=25,
+        summary="Fetched air quality.",
+        source="Open-Meteo",
+        status="available",
+    )
+    stored = []
+
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.get_climate_normal",
+        lambda **kwargs: ClimateSummary(
+            average_temperature_c=21,
+            precipitation_mm=1,
+            sunshine_hours=6,
+            summary="Stored climate.",
+        ),
+    )
+    monkeypatch.setattr("solo_api.recommendation_signals.get_air_quality_normal", lambda **kwargs: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.air_quality_sample_year", lambda: 2025)
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.fetch_air_quality_summary",
+        lambda **kwargs: fetched_air_quality,
+    )
+    monkeypatch.setattr(
+        "solo_api.recommendation_signals.store_air_quality_normal",
+        lambda **kwargs: stored.append(kwargs),
+    )
+    monkeypatch.setattr("solo_api.recommendation_signals.resolve_city_attractions", lambda **kwargs: [])
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
+
+    signals = get_destination_signals(
+        city(id="2988507", name="Paris"),
+        TravelWindow(id="may", start_date=date(2027, 5, 23), end_date=date(2027, 6, 4)),
+    )
+
+    assert signals.air_quality == fetched_air_quality
+    assert stored == [
+        {
+            "city_id": "2988507",
+            "year": 2025,
+            "month": 5,
+            "air_quality": fetched_air_quality,
+        }
+    ]
 
 
 def test_destination_signals_use_resolved_city_attractions(monkeypatch):
@@ -419,7 +514,7 @@ def test_destination_signals_use_resolved_city_attractions(monkeypatch):
         "solo_api.recommendation_signals.fetch_air_quality_summary",
         lambda **kwargs: AirQualitySummary(
             summary="Good air quality.",
-            source="OpenAQ",
+            source="Open-Meteo",
             status="available",
         ),
     )
@@ -458,7 +553,7 @@ def test_destination_signals_read_stored_attractions(monkeypatch):
         "solo_api.recommendation_signals.fetch_air_quality_summary",
         lambda **kwargs: AirQualitySummary(
             summary="Good air quality.",
-            source="OpenAQ",
+            source="Open-Meteo",
             status="available",
         ),
     )
@@ -485,7 +580,7 @@ def test_destination_signals_fall_back_with_warning(monkeypatch):
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
     monkeypatch.setattr(
         "solo_api.recommendation_signals.fetch_air_quality_summary",
-        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("openaq down")),
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("open-meteo down")),
     )
 
     destination = city()
@@ -499,7 +594,7 @@ def test_destination_signals_fall_back_with_warning(monkeypatch):
     assert signals.air_quality.status == "unavailable"
     assert any("Open-Meteo unavailable" in warning for warning in signals.warnings)
     assert any("Wikimedia unavailable" in warning for warning in signals.warnings)
-    assert any("OpenAQ unavailable" in warning for warning in signals.warnings)
+    assert any("Open-Meteo air quality unavailable" in warning for warning in signals.warnings)
 
 
 def test_recommended_destinations_endpoint_returns_direct_search_shape(monkeypatch):
@@ -522,7 +617,7 @@ def test_recommended_destinations_endpoint_returns_direct_search_shape(monkeypat
                 pm10=20.0,
                 no2=None,
                 summary="Fair air quality.",
-                source="OpenAQ",
+                source="Open-Meteo",
                 status="available",
             ),
             "warnings": [],

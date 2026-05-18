@@ -89,6 +89,22 @@ def _popularity_score(summary: str | None, destination: Destination) -> int:
 def _air_quality_score(air_quality: AirQualitySummary) -> int:
     if air_quality.status == "unavailable":
         return 6
+    if air_quality.european_aqi is not None:
+        if air_quality.european_aqi <= 20:
+            return 10
+        if air_quality.european_aqi <= 40:
+            return 8
+        if air_quality.european_aqi <= 60:
+            return 5
+        return 2
+    if air_quality.us_aqi is not None:
+        if air_quality.us_aqi <= 50:
+            return 10
+        if air_quality.us_aqi <= 100:
+            return 8
+        if air_quality.us_aqi <= 150:
+            return 5
+        return 2
     pm25 = air_quality.pm25
     if pm25 is None:
         return 6

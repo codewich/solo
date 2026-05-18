@@ -1,8 +1,17 @@
+import logging
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from solo_api.city_candidates import CityCatalogNotReadyError
 from solo_api.config import get_env
+
+# Configure logging
+log_level = get_env("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, log_level, logging.INFO),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 from solo_api.destination_intelligence import (
     DestinationIntelligenceStepError,
     build_destination_intelligence,
@@ -25,6 +34,7 @@ from solo_api.models import (
     RecommendationSearchCity,
     RecommendationSearchCreateRequest,
     RecommendationSearchCreateResponse,
+    TravelWindow,
     TravelWindowDeleteRequest,
 )
 from solo_api.recommendation_searches import (
@@ -33,6 +43,7 @@ from solo_api.recommendation_searches import (
     load_recommendation_search_city_intelligence,
     remove_travel_window,
     saved_recommendation_search_results,
+    saved_travel_windows,
     score_recommendation_search_city,
 )
 from solo_api.recommendations import recommend_destinations, recommended_destinations_search
@@ -111,6 +122,17 @@ def recommendation_searches(
         return create_recommendation_search(request)
     except ValueError as error:
         raise HTTPException(status_code=400, detail={"message": str(error)}) from error
+
+
+@app.get("/travel-windows")
+def list_saved_travel_windows(
+    user_email: str,
+    provider_subject: str | None = None,
+) -> list[TravelWindow]:
+    return saved_travel_windows(
+        user_email=user_email,
+        provider_subject=provider_subject,
+    )
 
 
 @app.delete("/travel-windows/{window_id}", status_code=204)

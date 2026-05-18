@@ -24,6 +24,7 @@ from solo_api.storage import (
     get_recommendation_search,
     get_saved_recommendation_results,
     get_user_id_for_auth,
+    list_travel_windows,
     store_recommendation_result,
 )
 from solo_api.destination_intelligence import build_destination_intelligence
@@ -163,6 +164,16 @@ def load_recommendation_search_city_intelligence(
 
 def saved_recommendation_search_results(search_id: str) -> list[Recommendation]:
     return get_saved_recommendation_results(search_id)
+
+
+def saved_travel_windows(*, user_email: str, provider_subject: str | None) -> list[TravelWindow]:
+    user_id = get_user_id_for_auth(
+        email=user_email,
+        provider_subject=provider_subject,
+    )
+    if user_id is None:
+        return []
+    return list_travel_windows(user_id=user_id)
 
 
 def remove_travel_window(window_id: str, request: TravelWindowDeleteRequest) -> None:

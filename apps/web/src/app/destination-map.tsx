@@ -43,6 +43,23 @@ export function buildDefaultMapStyle() {
   return defaultMapStyle;
 }
 
+function zoomForRadius(radiusKm: number): number {
+  if (radiusKm <= 900) {
+    return 5;
+  }
+  if (radiusKm <= 2200) {
+    return 4;
+  }
+  return 3;
+}
+
+export function mapViewForHome(homeCoordinates: [number, number], radiusKm: number) {
+  return {
+    center: homeCoordinates,
+    zoom: zoomForRadius(radiusKm),
+  };
+}
+
 function createCityMarkerElement(city: string, variant: "home" | "destination"): HTMLDivElement {
   const marker = document.createElement("div");
   marker.className = `city-marker city-marker-${variant}`;
@@ -95,6 +112,13 @@ export function DestinationMap({
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
   const markerRefs = useRef<import("maplibre-gl").Marker[]>([]);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const homeLongitude = homeCoordinates[0];
+  const homeLatitude = homeCoordinates[1];
+  const currentHomeCoordinates = useMemo(
+    () => [homeLongitude, homeLatitude] as [number, number],
+    [homeLongitude, homeLatitude],
+  );
+  const initialMapViewRef = useRef(mapViewForHome(currentHomeCoordinates, radiusKm));
   const [isMapReady, setIsMapReady] = useState(false);
   const mapStyle = process.env.NEXT_PUBLIC_MAP_STYLE_URL ?? defaultMapStyle;
   const visibleDestinations = useMemo(
@@ -122,10 +146,9 @@ export function DestinationMap({
 
       mapRef.current = new maplibregl.Map({
         attributionControl: { compact: true },
-        center: [2.5, 48.8],
+        ...initialMapViewRef.current,
         container: containerRef.current,
         style: mapStyle,
-        zoom: 4,
       });
       mapRef.current.addControl(
         new maplibregl.NavigationControl({ showCompass: false }),
@@ -158,6 +181,14 @@ export function DestinationMap({
   }, [mapStyle]);
 
   useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isMapReady) {
+      return;
+    }
+    map.jumpTo(mapViewForHome(currentHomeCoordinates, radiusKm));
+  }, [currentHomeCoordinates, isMapReady, radiusKm]);
+
+  useEffect(() => {
     let isMounted = true;
 
     async function renderMarkers() {
@@ -177,7 +208,7 @@ export function DestinationMap({
       const homeMarker = new maplibregl.Marker({
         element: createCityMarkerElement(homeCity, "home"),
       })
-        .setLngLat(homeCoordinates)
+        .setLngLat(currentHomeCoordinates)
         .setPopup(new maplibregl.Popup({ offset: 18 }).setText(`${homeCity} home base`))
         .addTo(map);
       markerRefs.current.push(homeMarker);
@@ -185,7 +216,7 @@ export function DestinationMap({
       if (!map.getSource("search-radius")) {
         map.addSource("search-radius", {
           type: "geojson",
-          data: circleFeature(homeCoordinates, radiusKm),
+          data: circleFeature(currentHomeCoordinates, radiusKm),
         });
         map.addLayer({
           id: "search-radius-fill",
@@ -210,7 +241,7 @@ export function DestinationMap({
         const source = map.getSource("search-radius") as
           | { setData: (data: ReturnType<typeof circleFeature>) => void }
           | undefined;
-        source?.setData(circleFeature(homeCoordinates, radiusKm));
+        source?.setData(circleFeature(currentHomeCoordinates, radiusKm));
       }
 
       if (showDestinationPins) {
@@ -235,7 +266,7 @@ export function DestinationMap({
     return () => {
       isMounted = false;
     };
-  }, [homeCity, homeCoordinates, isMapReady, radiusKm, showDestinationPins, visibleDestinations]);
+  }, [homeCity, currentHomeCoordinates, isMapReady, radiusKm, showDestinationPins, visibleDestinations]);
 
   return (
     <section className="map real-map" aria-label="Europe destination map">

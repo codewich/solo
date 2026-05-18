@@ -281,6 +281,18 @@ select:focus-visible {
   font-weight: 800;
 }
 
+.attraction-pill[data-slot="button"] {
+  height: 30px;
+  border-color: var(--border);
+  color: var(--text-muted);
+  background: var(--chip);
+  font-weight: 800;
+}
+
+.attraction-pill[data-slot="button"]:disabled {
+  opacity: 0.62;
+}
+
 .pill-remove {
   display: inline-flex;
   align-items: center;
@@ -764,13 +776,39 @@ select:focus-visible {
   -webkit-line-clamp: 2;
 }
 
-.destination-intelligence-compact {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 4px;
-  padding-top: 12px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+.recommendation-summary-tooltip {
+  max-width: min(360px, 86vw);
+  white-space: normal;
+  line-height: 1.45;
+}
+
+.attraction-list {
+  display: grid;
+  gap: 10px;
+  max-height: 58dvh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.attraction-list-item {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
+.attraction-list-item strong {
+  font-size: 0.95rem;
+}
+
+.attraction-list-item span,
+.attraction-list-item p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .air-good {

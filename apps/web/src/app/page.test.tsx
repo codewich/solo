@@ -69,7 +69,7 @@ function recommendation(destination = lisbon, score = 91) {
       pm10: 14,
       no2: null,
       summary: "Good air quality.",
-      source: "OpenAQ",
+      source: "Open-Meteo",
       status: "available",
     },
     reasons: ["Fits this travel window."],
@@ -99,12 +99,16 @@ function intelligence(destination = lisbon) {
 function installSearchFetch(overrides?: {
   create?: () => Promise<ResponseLike>;
   saved?: () => Promise<ResponseLike>;
+  travelWindows?: () => Promise<ResponseLike>;
   cities?: () => Promise<ResponseLike>;
   score?: (cityId: string) => Promise<ResponseLike>;
   details?: (cityId: string) => Promise<ResponseLike>;
 }) {
   const fetchMock = vi.fn(async (url: string) => {
     const path = String(url);
+    if (path.includes("/travel-windows?")) {
+      return overrides?.travelWindows?.() ?? ok([]);
+    }
     if (path.endsWith("/recommendation-searches")) {
       return overrides?.create?.() ?? ok({ id: "search-1", travel_window_id: "may", status: "created" });
     }
@@ -171,11 +175,23 @@ function fail(status: number, message: string): ResponseLike {
   };
 }
 
-async function selectSpringWindow() {
+async function createSpringWindow() {
   await waitFor(() => {
-    expect(screen.getByRole("button", { name: /Select Spring bank holiday/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add range" })).toBeEnabled();
   });
-  fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Add range" }));
+  fireEvent.click(screen.getByRole("button", { name: /22 May 2026/ }));
+  fireEvent.click(screen.getByRole("button", { name: /25 May 2026/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Save draft range" }));
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: /Select 22 May-25 May 2026/ })).toBeInTheDocument();
+  });
+}
+
+async function selectSpringWindow() {
+  await createSpringWindow();
+  fireEvent.click(screen.getByRole("button", { name: /Select 22 May-25 May 2026/ }));
 }
 
 describe("Solo homepage", () => {
@@ -204,8 +220,9 @@ describe("Solo homepage", () => {
     expect(screen.getByText("Candidate travel windows")).toBeInTheDocument();
     expect(screen.getByLabelText("Europe destination map")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Find destinations" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Select Spring bank holiday/ })).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Select Spring bank holiday/ })).toBeInTheDocument();
+      expect(screen.getByText("0 ranges")).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(screen.getByLabelText("Holiday region")).toHaveValue("gb-eng");
@@ -248,20 +265,50 @@ describe("Solo homepage", () => {
     expect(screen.getByRole("button", { name: "Find destinations" })).toBeDisabled();
   });
 
+  it("loads saved date ranges for the signed-in user on refresh", async () => {
+    const fetchMock = installSearchFetch({
+      travelWindows: async () =>
+        ok([
+          {
+            id: "range-saved",
+            label: "Saved Paris weekend",
+            start_date: "2026-05-22",
+            end_date: "2026-05-25",
+            status: "candidate",
+          },
+        ]),
+    });
+
+    render(<Page />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Select Saved Paris weekend/ })).toBeInTheDocument();
+    });
+    expect(screen.getByText("1 range")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes(
+          "/travel-windows?user_email=solo%40example.com&provider_subject=solo%40example.com",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("deletes a date range from the API before removing it from the saved range list", async () => {
     const fetchMock = installSearchFetch();
     render(<Page />);
 
+    await createSpringWindow();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Remove Spring bank holiday/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Remove 22 May-25 May 2026/ })).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole("button", { name: /Remove Spring bank holiday/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Remove 22 May-25 May 2026/ }));
 
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: /Select Spring bank holiday/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Select 22 May-25 May 2026/ })).not.toBeInTheDocument();
     });
     const deleteCall = fetchMock.mock.calls.find(
-      ([url, init]) => String(url).endsWith("/travel-windows/may") && init?.method === "DELETE",
+      ([url, init]) => String(url).includes("/travel-windows/range-") && init?.method === "DELETE",
     );
     expect(deleteCall).toBeDefined();
     expect(JSON.parse(String(deleteCall?.[1]?.body))).toEqual({
@@ -307,6 +354,8 @@ describe("Solo homepage", () => {
     expect(screen.getByText("4 mm rain")).toBeInTheDocument();
     expect(screen.getByText("3 h sun")).toBeInTheDocument();
     expect(screen.getByText("Good air")).toHaveClass("air-good");
+    fireEvent.click(screen.getByRole("button", { name: "7 attractions nearby" }));
+    expect(screen.getByText("Attractions near Lisbon, Portugal")).toBeInTheDocument();
     expect(screen.getByText("Belem Tower")).toBeInTheDocument();
     expect(screen.queryByText(/hotel/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/affordability/i)).not.toBeInTheDocument();
@@ -447,8 +496,9 @@ describe("Solo homepage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
-      expect(screen.getAllByText("N/A").length).toBeGreaterThan(0);
+      expect(screen.getAllByRole("button", { name: "Attractions N/A" }).length).toBeGreaterThan(0);
     });
+    expect(screen.getAllByRole("button", { name: "Attractions N/A" }).every((button) => button.hasAttribute("disabled"))).toBe(true);
   });
 
   it("shows a card-level retry button only for city scoring failures", async () => {
@@ -492,7 +542,7 @@ describe("Solo homepage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Select Summer bank holiday/ })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /Select 22 May-25 May 2026/ })).toBeDisabled();
     });
 
     resolveCities(ok([]));

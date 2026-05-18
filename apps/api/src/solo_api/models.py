@@ -167,11 +167,13 @@ class AttractionSummary(BaseModel):
 
 
 class AirQualitySummary(BaseModel):
+    european_aqi: float | None = None
+    us_aqi: float | None = None
     pm25: float | None = None
     pm10: float | None = None
     no2: float | None = None
     summary: str
-    source: str = "OpenAQ"
+    source: str = "Open-Meteo"
     status: Literal["available", "unavailable"] = "available"
 
 

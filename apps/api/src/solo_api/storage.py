@@ -12,6 +12,7 @@ from solo_api.cache import ATTRACTIONS_TTL_SECONDS
 from solo_api.config import get_env
 from solo_api.models import (
     AttractionSummary,
+    AirQualitySummary,
     ClimateSummary,
     Destination,
     HolidayRegion,
@@ -374,6 +375,107 @@ def store_climate_normal(
             climate.precipitation_mm,
             climate.sunshine_hours,
             source,
+        ],
+    )
+
+
+def get_air_quality_normal(
+    *,
+    city_id: str,
+    year: int,
+    month: int,
+) -> AirQualitySummary | None:
+    if not database.is_database_configured():
+        return None
+
+    row = database.fetch_one(
+        """
+        select european_aqi, us_aqi, pm25, pm10, no2, source
+        from city_air_quality_normals
+        where city_id = %s
+          and year = %s
+          and month = %s
+        """,
+        [city_id, year, month],
+    )
+    if row is None:
+        return None
+
+    values = {
+        "european_aqi": row["european_aqi"],
+        "us_aqi": row["us_aqi"],
+        "pm25": row["pm25"],
+    }
+    parts = []
+    if values["european_aqi"] is not None:
+        parts.append(f"European AQI {values['european_aqi']:.1f}")
+    if values["us_aqi"] is not None:
+        parts.append(f"US AQI {values['us_aqi']:.1f}")
+    if values["pm25"] is not None:
+        parts.append(f"PM2.5 {values['pm25']:.1f} ug/m3")
+    summary = (
+        f"Open-Meteo modeled air quality average for {year}-{month:02d}: "
+        + ", ".join(parts)
+        + "."
+        if parts
+        else "Open-Meteo air quality data is unavailable; ranking used a neutral fallback."
+    )
+
+    return AirQualitySummary(
+        european_aqi=row["european_aqi"],
+        us_aqi=row["us_aqi"],
+        pm25=row["pm25"],
+        pm10=row["pm10"],
+        no2=row["no2"],
+        summary=summary,
+        source=row["source"],
+        status="available",
+    )
+
+
+def store_air_quality_normal(
+    *,
+    city_id: str,
+    year: int,
+    month: int,
+    air_quality: AirQualitySummary,
+) -> None:
+    if not database.is_database_configured() or air_quality.status == "unavailable":
+        return
+    if (
+        air_quality.european_aqi is None
+        and air_quality.us_aqi is None
+        and air_quality.pm25 is None
+        and air_quality.pm10 is None
+        and air_quality.no2 is None
+    ):
+        return
+
+    database.execute(
+        """
+        insert into city_air_quality_normals (
+          city_id, year, month, european_aqi, us_aqi, pm25, pm10, no2, source
+        )
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        on conflict (city_id, year, month) do update set
+          european_aqi = excluded.european_aqi,
+          us_aqi = excluded.us_aqi,
+          pm25 = excluded.pm25,
+          pm10 = excluded.pm10,
+          no2 = excluded.no2,
+          source = excluded.source,
+          updated_at = now()
+        """,
+        [
+            city_id,
+            year,
+            month,
+            air_quality.european_aqi,
+            air_quality.us_aqi,
+            air_quality.pm25,
+            air_quality.pm10,
+            air_quality.no2,
+            air_quality.source,
         ],
     )
 
@@ -872,6 +974,31 @@ def delete_travel_window(*, user_id: str, travel_window_id: str) -> bool:
             deleted = cursor.rowcount > 0
         connection.commit()
     return deleted
+
+
+def list_travel_windows(*, user_id: str) -> list[TravelWindow]:
+    if not database.is_database_configured():
+        return []
+
+    rows = database.fetch_all(
+        """
+        select id, label, start_date, end_date, status
+        from travel_windows
+        where user_id = %s
+        order by start_date asc, created_at asc
+        """,
+        [user_id],
+    )
+    return [
+        TravelWindow(
+            id=str(row["id"]),
+            label=row["label"],
+            start_date=row["start_date"],
+            end_date=row["end_date"],
+            status=row["status"],
+        )
+        for row in rows
+    ]
 
 
 def get_recommendation_search(search_id: str) -> dict[str, Any] | None:

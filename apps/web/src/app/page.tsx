@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
-import { LocateFixed, RotateCcw, X } from "lucide-react";
+import { ListChecks, LocateFixed, RotateCcw, X } from "lucide-react";
 import { getSession } from "next-auth/react";
 import type { Session } from "next-auth";
 import { toast } from "sonner";
@@ -10,6 +10,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,6 +40,7 @@ import {
   fetchPublicHolidays,
   fetchRecommendationSearchCities,
   fetchRecommendationSearchCityIntelligence,
+  fetchTravelWindows,
   fetchSavedRecommendationSearchResults,
   scoreRecommendationSearchCity,
 } from "@/lib/api";
@@ -86,33 +95,6 @@ type CandidateCard = {
   detailsLoading: boolean;
   order: number;
 };
-
-const initialTravelWindows: PlanningWindow[] = [
-  {
-    id: "may",
-    label: "Spring bank holiday",
-    dates: "22-25 May 2026",
-    start_date: "2026-05-22",
-    end_date: "2026-05-25",
-    status: "candidate",
-  },
-  {
-    id: "august",
-    label: "Summer bank holiday",
-    dates: "28-31 Aug 2026",
-    start_date: "2026-08-28",
-    end_date: "2026-08-31",
-    status: "candidate",
-  },
-  {
-    id: "christmas",
-    label: "Christmas window",
-    dates: "24-28 Dec 2026",
-    start_date: "2026-12-24",
-    end_date: "2026-12-28",
-    status: "candidate",
-  },
-];
 
 const defaultHomeCity: SelectedCity = {
   id: "2643743",
@@ -214,6 +196,16 @@ function planningWindowFromDraft(range: DraftRange, existingWindows: PlanningWin
   };
 }
 
+function planningWindowFromSaved(window: TravelWindow): PlanningWindow {
+  const dates = formatWindowLabel(window.start_date, window.end_date);
+  return {
+    ...window,
+    label: window.label ?? dates,
+    dates,
+    status: window.status ?? "candidate",
+  };
+}
+
 function errorMessage(reason: unknown, fallback: string): string {
   return reason instanceof ApiRequestError || reason instanceof Error ? reason.message : fallback;
 }
@@ -270,10 +262,38 @@ function AirQualityPill({ recommendation }: { recommendation: Recommendation }) 
   if (!air || air.status === "unavailable") {
     return <Pill className="air-unknown">Air N/A</Pill>;
   }
+  if (air.european_aqi !== undefined && air.european_aqi !== null) {
+    const label =
+      air.european_aqi <= 20 ? "Good air" : air.european_aqi <= 60 ? "Moderate air" : "Poor air";
+    const className =
+      air.european_aqi <= 20 ? "air-good" : air.european_aqi <= 60 ? "air-moderate" : "air-poor";
+    return <Pill className={className}>{label}</Pill>;
+  }
+  if (air.us_aqi !== undefined && air.us_aqi !== null) {
+    const label = air.us_aqi <= 50 ? "Good air" : air.us_aqi <= 150 ? "Moderate air" : "Poor air";
+    const className = air.us_aqi <= 50 ? "air-good" : air.us_aqi <= 150 ? "air-moderate" : "air-poor";
+    return <Pill className={className}>{label}</Pill>;
+  }
   const pm25 = air.pm25 ?? 0;
   const label = pm25 <= 10 ? "Good air" : pm25 <= 25 ? "Moderate air" : "Poor air";
   const className = pm25 <= 10 ? "air-good" : pm25 <= 25 ? "air-moderate" : "air-poor";
   return <Pill className={className}>{label}</Pill>;
+}
+
+function AutocompleteLoadingRows() {
+  return (
+    <>
+      <li>
+        <Skeleton className="h-8 w-full" />
+      </li>
+      <li>
+        <Skeleton className="h-8 w-5/6" />
+      </li>
+      <li>
+        <Skeleton className="h-8 w-2/3" />
+      </li>
+    </>
+  );
 }
 
 function DestinationCandidateCard({
@@ -289,8 +309,7 @@ function DestinationCandidateCard({
   const imageUrl = recommendation?.image_url ?? recommendation?.imageUrl;
   const climate = recommendation?.climate ?? card.intelligence?.climate;
   const attractionCount = recommendation?.attraction_count ?? recommendation?.attractionCount;
-  const topAttraction =
-    card.intelligence?.attractions?.[0]?.name ?? recommendation?.top_attractions?.[0] ?? null;
+  const attractions = card.intelligence?.attractions ?? [];
   const cardStyle = imageUrl
     ? {
         backgroundImage: `linear-gradient(rgba(23, 33, 29, 0.72), rgba(23, 33, 29, 0.72)), url(${imageUrl})`,
@@ -370,13 +389,52 @@ function DestinationCandidateCard({
           </>
         ) : (
           <>
-            <p className="muted recommendation-description">{recommendation.summary ?? recommendation.reasons[0]}</p>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <p className="muted recommendation-description">{recommendation.summary ?? recommendation.reasons[0]}</p>
+              </TooltipTrigger>
+              <TooltipContent className="recommendation-summary-tooltip">
+                {recommendation.summary ?? recommendation.reasons[0]}
+              </TooltipContent>
+            </Tooltip>
             {card.scoring ? <ScoringSkeleton /> : null}
             {card.detailsLoading ? (
               <DetailSkeleton />
             ) : (
               <div className="badge-row">
-                <Pill>{attractionCount ?? 0} attractions nearby</Pill>
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button
+                      className="app-pill attraction-pill"
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={card.detailsError !== undefined || attractions.length === 0}
+                    >
+                      <ListChecks data-icon="inline-start" />
+                      {card.detailsError ? "Attractions N/A" : `${attractionCount ?? attractions.length} attractions nearby`}
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>
+                        Attractions near {city}, {country}
+                      </DialogTitle>
+                      <DialogDescription>
+                        Nearby places from the destination intelligence lookup.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="attraction-list">
+                      {attractions.map((attraction) => (
+                        <div className="attraction-list-item" key={`${attraction.name}-${attraction.source}`}>
+                          <strong>{attraction.name}</strong>
+                          <span>{attraction.category}</span>
+                          {attraction.description ? <p>{attraction.description}</p> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </DialogContent>
+                </Dialog>
                 <Pill>{temperatureRange}</Pill>
                 <Pill>{rainfall}</Pill>
                 <Pill>{sunshine}</Pill>
@@ -385,11 +443,7 @@ function DestinationCandidateCard({
             )}
             {card.detailsLoading ? (
               <IntelligenceSkeleton />
-            ) : (
-              <div className="destination-intelligence-compact">
-                <Pill>{card.detailsError ? "N/A" : topAttraction ?? "N/A"}</Pill>
-              </div>
-            )}
+            ) : null}
           </>
         )}
       </CardContent>
@@ -403,6 +457,7 @@ export default function Page() {
   const [homeLocation, setHomeLocation] = useState<SelectedCity>(defaultHomeCity);
   const [homeQuery, setHomeQuery] = useState(defaultHomeCity.city);
   const [homeSuggestions, setHomeSuggestions] = useState<CitySuggestion[]>([]);
+  const [isHomeSuggesting, setIsHomeSuggesting] = useState(false);
   const [travelWindows, setTravelWindows] = useState<PlanningWindow[]>([]);
   const [selectedTravelWindowId, setSelectedTravelWindowId] = useState<string | null>(null);
   const [visibleCalendarMonth, setVisibleCalendarMonth] = useState(() => new Date(2026, 4, 1));
@@ -421,6 +476,7 @@ export default function Page() {
   const [excludedCities, setExcludedCities] = useState<CitySuggestion[]>([]);
   const [excludedQuery, setExcludedQuery] = useState("");
   const [excludedSuggestions, setExcludedSuggestions] = useState<CitySuggestion[]>([]);
+  const [isExcludedSuggesting, setIsExcludedSuggesting] = useState(false);
   const [holidayRegions, setHolidayRegions] = useState<HolidayRegion[]>([]);
   const [selectedHolidayRegion, setSelectedHolidayRegion] = useState<string | null>(null);
   const [publicHolidays, setPublicHolidays] = useState<PublicHoliday[]>([]);
@@ -501,11 +557,7 @@ export default function Page() {
         }
         setSession(nextSession);
         setIsSessionLoaded(true);
-        if (nextSession?.user) {
-          setTravelWindows((currentWindows) =>
-            currentWindows.length > 0 ? currentWindows : initialTravelWindows,
-          );
-        } else {
+        if (!nextSession?.user) {
           setTravelWindows([]);
           setSelectedTravelWindowId(null);
           setDraftRange(null);
@@ -513,6 +565,28 @@ export default function Page() {
           setIsAddingRange(false);
           setCandidateCards([]);
           setStatus("idle");
+        }
+        if (nextSession?.user?.email) {
+          void fetchTravelWindows({
+            userEmail: nextSession.user.email,
+            providerSubject: nextSession.user.email,
+          })
+            .then((savedWindows) => {
+              if (!isActive) {
+                return;
+              }
+              setTravelWindows(savedWindows.map(planningWindowFromSaved));
+              setSelectedTravelWindowId((currentSelectedId) =>
+                currentSelectedId && savedWindows.some((window) => window.id === currentSelectedId)
+                  ? currentSelectedId
+                  : null,
+              );
+            })
+            .catch((reason) => {
+              if (isActive) {
+                showPersistentError(errorMessage(reason, "Could not load saved travel windows."));
+              }
+            });
         }
       })
       .catch(() => {
@@ -605,12 +679,15 @@ export default function Page() {
     const query = homeQuery.trim();
     if (query.length < 2 || query === homeLocation.city) {
       setHomeSuggestions([]);
+      setIsHomeSuggesting(false);
       return undefined;
     }
+    setIsHomeSuggesting(true);
     const timer = window.setTimeout(() => {
       void fetchCitySuggestions(query)
         .then(setHomeSuggestions)
-        .catch(() => setHomeSuggestions([]));
+        .catch(() => setHomeSuggestions([]))
+        .finally(() => setIsHomeSuggesting(false));
     }, 180);
     return () => window.clearTimeout(timer);
   }, [homeLocation.city, homeQuery]);
@@ -619,8 +696,10 @@ export default function Page() {
     const query = excludedQuery.trim();
     if (query.length < 2) {
       setExcludedSuggestions([]);
+      setIsExcludedSuggesting(false);
       return undefined;
     }
+    setIsExcludedSuggesting(true);
     const timer = window.setTimeout(() => {
       void fetchCitySuggestions(query)
         .then((suggestions) =>
@@ -632,7 +711,8 @@ export default function Page() {
             ),
           ),
         )
-        .catch(() => setExcludedSuggestions([]));
+        .catch(() => setExcludedSuggestions([]))
+        .finally(() => setIsExcludedSuggesting(false));
     }, 180);
     return () => window.clearTimeout(timer);
   }, [excludedCities, excludedQuery, homeLocation.id]);
@@ -946,24 +1026,28 @@ export default function Page() {
                 disabled={status === "loading"}
                 onChange={(event) => setHomeQuery(event.target.value)}
               />
-              {homeSuggestions.length > 0 ? (
+              {homeQuery.trim().length >= 2 && homeQuery.trim() !== homeLocation.city && (isHomeSuggesting || homeSuggestions.length > 0) ? (
                 <ul className="autocomplete-list home-city-results" aria-label="Home city suggestions">
-                  {homeSuggestions.map((suggestion) => (
-                    <li key={suggestion.id}>
-                      <button
-                        className="autocomplete-option"
-                        type="button"
-                        onClick={() => {
-                          const nextHome = cityFromSuggestion(suggestion);
-                          setHomeLocation(nextHome);
-                          setHomeQuery(nextHome.city);
-                          setHomeSuggestions([]);
-                        }}
-                      >
-                        {suggestion.name}, {suggestion.country}
-                      </button>
-                    </li>
-                  ))}
+                  {isHomeSuggesting ? (
+                    <AutocompleteLoadingRows />
+                  ) : (
+                    homeSuggestions.map((suggestion) => (
+                      <li key={suggestion.id}>
+                        <button
+                          className="autocomplete-option"
+                          type="button"
+                          onClick={() => {
+                            const nextHome = cityFromSuggestion(suggestion);
+                            setHomeLocation(nextHome);
+                            setHomeQuery(nextHome.city);
+                            setHomeSuggestions([]);
+                          }}
+                        >
+                          {suggestion.name}, {suggestion.country}
+                        </button>
+                      </li>
+                    ))
+                  )}
                 </ul>
               ) : null}
             </div>
@@ -1059,7 +1143,7 @@ export default function Page() {
                 {canManageTravelWindows ? (
                   <>
                     <Badge className="score-badge" variant="secondary">
-                      {travelWindows.length} ranges
+                      {travelWindows.length} {travelWindows.length === 1 ? "range" : "ranges"}
                     </Badge>
                     <div className="range-list" aria-label="Candidate range list">
                       {visibleTravelWindows.map((window) => {
@@ -1145,7 +1229,7 @@ export default function Page() {
                                   type="button"
                                   variant="destructive"
                                   size="sm"
-                                  disabled={status === "loading" || travelWindows.length === 1}
+                                  disabled={status === "loading"}
                                   aria-label={`Remove ${window.label}`}
                                   onClick={() => void handleRemoveTravelWindow(window.id)}
                                 >
@@ -1230,33 +1314,37 @@ export default function Page() {
                     id="excluded-city"
                     aria-label="Exclude cities"
                     aria-controls="excluded-city-suggestions"
-                    aria-expanded={excludedSuggestions.length > 0}
+                    aria-expanded={excludedQuery.trim().length >= 2 && (isExcludedSuggesting || excludedSuggestions.length > 0)}
                     role="combobox"
                     value={excludedQuery}
                     disabled={status === "loading"}
                     onChange={(event) => setExcludedQuery(event.target.value)}
                   />
-                  {excludedSuggestions.length > 0 ? (
+                  {excludedQuery.trim().length >= 2 && (isExcludedSuggesting || excludedSuggestions.length > 0) ? (
                     <ul
                       className="autocomplete-list excluded-city-results"
                       id="excluded-city-suggestions"
                       aria-label="Excluded city suggestions"
                     >
-                      {excludedSuggestions.map((suggestion) => (
-                        <li key={suggestion.id}>
-                          <button
-                            className="autocomplete-option"
-                            type="button"
-                            onClick={() => {
-                              setExcludedCities((cities) => [...cities, suggestion]);
-                              setExcludedQuery("");
-                              setExcludedSuggestions([]);
-                            }}
-                          >
-                            {suggestion.name}, {suggestion.country}
-                          </button>
-                        </li>
-                      ))}
+                      {isExcludedSuggesting ? (
+                        <AutocompleteLoadingRows />
+                      ) : (
+                        excludedSuggestions.map((suggestion) => (
+                          <li key={suggestion.id}>
+                            <button
+                              className="autocomplete-option"
+                              type="button"
+                              onClick={() => {
+                                setExcludedCities((cities) => [...cities, suggestion]);
+                                setExcludedQuery("");
+                                setExcludedSuggestions([]);
+                              }}
+                            >
+                              {suggestion.name}, {suggestion.country}
+                            </button>
+                          </li>
+                        ))
+                      )}
                     </ul>
                   ) : null}
                   {excludedCities.length > 0 ? (
