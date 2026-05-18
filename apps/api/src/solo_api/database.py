@@ -30,7 +30,7 @@ def connect():
     except ImportError as error:
         raise RuntimeError("Install psycopg to use PostgreSQL persistence.") from error
 
-    with psycopg.connect(url, row_factory=dict_row) as connection:
+    with psycopg.connect(url, row_factory=dict_row, prepare_threshold=None) as connection:
         yield connection
 
 

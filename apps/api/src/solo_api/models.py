@@ -39,7 +39,6 @@ class RecommendationScoreBreakdown(BaseModel):
     climate_score: int = Field(alias="climateScore")
     attraction_score: int = Field(alias="attractionScore")
     popularity_score: int = Field(alias="popularityScore")
-    affordability_score: int = Field(alias="affordabilityScore")
     air_quality_score: int = Field(default=6, alias="airQualityScore")
 
     model_config = ConfigDict(populate_by_name=True)
@@ -73,6 +72,7 @@ class Recommendation(BaseModel):
     climate: "ClimateSummary | None" = None
     air_quality: "AirQualitySummary | None" = Field(default=None, alias="airQuality")
     warning: str | None = None
+    status: Literal["ready", "error"] = "ready"
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -151,25 +151,6 @@ class AttractionSummary(BaseModel):
     source: str
 
 
-class HotelPriceSummary(BaseModel):
-    average_nightly_price: float | None
-    median_nightly_price: float | None
-    currency: str | None
-    sample_size: int
-    source: str = "unavailable"
-    status: Literal["available", "unavailable"] = "available"
-
-
-class CostOfLivingSummary(BaseModel):
-    currency: str
-    meal_inexpensive: float | None = None
-    coffee: float | None = None
-    local_transport_ticket: float | None = None
-    summary: str
-    source: str
-    status: Literal["available", "unavailable"] = "available"
-
-
 class AirQualitySummary(BaseModel):
     pm25: float | None = None
     pm10: float | None = None
@@ -190,6 +171,32 @@ class DestinationIntelligence(BaseModel):
     country: str
     climate: ClimateSummary
     attractions: list[AttractionSummary]
-    hotels: HotelPriceSummary
-    cost_of_living: CostOfLivingSummary
     warnings: list[DestinationIntelligenceWarning] = []
+
+
+class RecommendationSearchCreateRequest(BaseModel):
+    travel_window: TravelWindow
+    home_city_id: str
+    radius_km: int = Field(default=1800, ge=1, le=5000)
+    min_population: int = Field(default=250000, ge=0)
+    candidate_limit: int = Field(default=10, ge=1, le=50)
+    excluded_city_ids: list[str] = Field(default_factory=list)
+    user_email: str | None = None
+    user_name: str | None = None
+    provider_subject: str | None = None
+
+
+class RecommendationSearchCreateResponse(BaseModel):
+    id: str
+    travel_window_id: str
+    status: Literal["created"] = "created"
+
+
+class RecommendationSearchCity(BaseModel):
+    search_id: str
+    destination: Destination
+
+
+class NearestCityRequest(BaseModel):
+    latitude: float
+    longitude: float

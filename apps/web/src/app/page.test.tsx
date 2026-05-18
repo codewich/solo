@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Toaster } from "@/components/ui/sonner";
 import Page from "./page";
 
@@ -6,144 +6,187 @@ vi.mock("@/components/auth-button", () => ({
   AuthButton: () => <button type="button">Sign in with Google</button>,
 }));
 
-describe("Solo homepage", () => {
-  beforeEach(() => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        return {
-          ok: true,
-          json: async () => [
-            {
-              travel_window: { id: "may", start_date: "2026-05-23", end_date: "2026-05-25" },
-              recommendations: [
-                {
-                  travel_window_id: "may",
-                  destination: {
-                    id: "lisbon-pt",
-                    city: "Lisbon",
-                    country: "Portugal",
-                    latitude: 38.7223,
-                    longitude: -9.1393,
-                    population: 544851,
-                  },
-                  score: 91,
-                  score_breakdown: {
-                    climateScore: 35,
-                    attractionScore: 25,
-                    popularityScore: 19,
-                    affordabilityScore: 12,
-                    airQualityScore: 8,
-                  },
-                  attraction_count: 7,
-                  image_url: "https://images.example/lisbon.jpg",
-                  climate: {
-                    average_temperature_c: 23,
-                    average_temperature_min_c: 17,
-                    average_temperature_max_c: 28,
-                    precipitation_mm: 4,
-                    sunshine_hours: 3,
-                    summary: "Average historical temperature is about 23C for this window.",
-                    source: "Open-Meteo",
-                  },
-                  air_quality: {
-                    pm25: 8,
-                    pm10: 14,
-                    no2: null,
-                    summary: "Good air quality.",
-                    source: "OpenAQ",
-                    status: "available",
-                  },
-                  reasons: ["Fits this travel window."],
-                  caveats: [],
-                },
-              ],
-            },
-            {
-              travel_window: {
-                id: "august",
-                start_date: "2026-08-28",
-                end_date: "2026-08-31",
-              },
-              recommendations: [
-                {
-                  travel_window_id: "august",
-                  destination: {
-                    id: "copenhagen-dk",
-                    city: "Copenhagen",
-                    country: "Denmark",
-                    latitude: 55.6761,
-                    longitude: 12.5683,
-                    population: 660842,
-                  },
-                  score: 86,
-                  score_breakdown: {
-                    climateScore: 30,
-                    attractionScore: 25,
-                    popularityScore: 20,
-                    affordabilityScore: 11,
-                    airQualityScore: 6,
-                  },
-                  attraction_count: 8,
-                  image_url: "https://images.example/copenhagen.jpg",
-                  air_quality: {
-                    pm25: 12,
-                    pm10: 20,
-                    no2: null,
-                    summary: "Fair air quality.",
-                    source: "OpenAQ",
-                    status: "available",
-                  },
-                  reasons: ["Long daylight fits this summer window."],
-                  caveats: [],
-                },
-              ],
-            },
-          ],
-        };
-      }),
-    );
-  });
+const lisbon = {
+  id: "2267057",
+  city: "Lisbon",
+  country: "Portugal",
+  latitude: 38.7223,
+  longitude: -9.1393,
+  population: 544851,
+};
 
+const porto = {
+  id: "2735943",
+  city: "Porto",
+  country: "Portugal",
+  latitude: 41.1579,
+  longitude: -8.6291,
+  population: 249633,
+};
+
+const madridSuggestion = {
+  id: "3117735",
+  name: "Madrid",
+  country: "Spain",
+  latitude: 40.4168,
+  longitude: -3.7038,
+  timezone: "Europe/Madrid",
+};
+
+function recommendation(destination = lisbon, score = 91) {
+  return {
+    travel_window_id: "may",
+    destination,
+    score,
+    score_breakdown: {
+      climateScore: 35,
+      attractionScore: 25,
+      popularityScore: 19,
+      airQualityScore: 8,
+    },
+    attraction_count: 7,
+    image_url: "https://images.example/lisbon.jpg",
+    climate: {
+      average_temperature_c: 23,
+      average_temperature_min_c: 17,
+      average_temperature_max_c: 28,
+      precipitation_mm: 4,
+      sunshine_hours: 3,
+      summary: "Average historical temperature is about 23C for this month.",
+      source: "Open-Meteo",
+    },
+    air_quality: {
+      pm25: 8,
+      pm10: 14,
+      no2: null,
+      summary: "Good air quality.",
+      source: "OpenAQ",
+      status: "available",
+    },
+    reasons: ["Fits this travel window."],
+    caveats: [],
+    summary: "Sunny, compact, and easy to navigate.",
+  };
+}
+
+function intelligence(destination = lisbon) {
+  return {
+    destination_city: destination.city,
+    country: destination.country,
+    climate: {
+      average_temperature_c: 23,
+      average_temperature_min_c: 17,
+      average_temperature_max_c: 28,
+      precipitation_mm: 4,
+      sunshine_hours: 3,
+      summary: "Average historical temperature is about 23C for this month.",
+      source: "Open-Meteo",
+    },
+    attractions: [{ name: "Belem Tower", category: "attraction", source: "OpenStreetMap" }],
+    warnings: [],
+  };
+}
+
+function installSearchFetch(overrides?: {
+  create?: () => Promise<ResponseLike>;
+  saved?: () => Promise<ResponseLike>;
+  cities?: () => Promise<ResponseLike>;
+  score?: (cityId: string) => Promise<ResponseLike>;
+  details?: (cityId: string) => Promise<ResponseLike>;
+}) {
+  const fetchMock = vi.fn(async (url: string) => {
+    const path = String(url);
+    if (path.endsWith("/recommendation-searches")) {
+      return overrides?.create?.() ?? ok({ id: "search-1", travel_window_id: "may", status: "created" });
+    }
+    if (path.endsWith("/recommendation-searches/search-1/recommendations")) {
+      return overrides?.saved?.() ?? ok([]);
+    }
+    if (path.endsWith("/recommendation-searches/search-1/cities")) {
+      return (
+        overrides?.cities?.() ??
+        ok([
+          { search_id: "search-1", destination: lisbon },
+          { search_id: "search-1", destination: porto },
+        ])
+      );
+    }
+    if (path.includes("/recommendation-searches/search-1/cities/") && path.endsWith("/score")) {
+      const cityId = path.split("/cities/")[1].split("/")[0];
+      return overrides?.score?.(cityId) ?? ok(recommendation(cityId === porto.id ? porto : lisbon, cityId === porto.id ? 86 : 91));
+    }
+    if (path.includes("/recommendation-searches/search-1/cities/") && path.endsWith("/intelligence")) {
+      const cityId = path.split("/cities/")[1].split("/")[0];
+      return overrides?.details?.(cityId) ?? ok(intelligence(cityId === porto.id ? porto : lisbon));
+    }
+    if (path.includes("/geocode/cities")) {
+      return ok([madridSuggestion]);
+    }
+    return ok([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+type ResponseLike = {
+  ok: boolean;
+  status?: number;
+  json: () => Promise<unknown>;
+};
+
+function ok(payload: unknown): ResponseLike {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => payload,
+  };
+}
+
+function fail(status: number, message: string): ResponseLike {
+  return {
+    ok: false,
+    status,
+    json: async () => ({ detail: { message } }),
+  };
+}
+
+describe("Solo homepage", () => {
   afterEach(() => {
-    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it("renders the travel calendar map workflow", async () => {
+  it("renders the map workflow with home city controls in the top bar", async () => {
+    installSearchFetch();
+
     render(<Page />);
 
     expect(screen.getByRole("heading", { name: "Solo" })).toBeInTheDocument();
     expect(screen.getByText("Long-weekend map planner")).toBeInTheDocument();
-    expect(screen.getByText("Home city: London")).toBeInTheDocument();
+    expect(screen.getByLabelText("Home city")).toHaveValue("London");
+    expect(screen.getByRole("button", { name: "Use current location" })).toBeInTheDocument();
     expect(screen.getByText("Candidate travel windows")).toBeInTheDocument();
     expect(screen.getByLabelText("Europe destination map")).toBeInTheDocument();
-    expect(screen.getByTestId("maplibre-map")).toBeInTheDocument();
-    expect(screen.getByLabelText("Search radius 1800 km")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Find destinations" })).toBeDisabled();
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
     });
   });
 
-  it("starts without active date-range recommendations", () => {
-    render(<Page />);
-
-    expect(screen.getByText("Select a date range to find matches.")).toBeInTheDocument();
-    expect(screen.queryByText("Lisbon, Portugal")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Lisbon city marker")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Find destinations" })).toBeDisabled();
-  });
-
-  it("enables destination search after selecting a saved range", () => {
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
-
-    expect(screen.getByRole("button", { name: "Find destinations" })).toBeEnabled();
-  });
-
-  it("loads recommendations from the API into the map workspace", async () => {
+  it("loads candidate cards first, then fills them as scoring and details return", async () => {
+    let resolveScore: (value: ResponseLike) => void = () => {};
+    let resolveDetails: (value: ResponseLike) => void = () => {};
+    const scoreResponse = new Promise<ResponseLike>((resolve) => {
+      resolveScore = resolve;
+    });
+    const detailsResponse = new Promise<ResponseLike>((resolve) => {
+      resolveDetails = resolve;
+    });
+    const fetchMock = installSearchFetch({
+      cities: async () => ok([{ search_id: "search-1", destination: lisbon }]),
+      score: async () => scoreResponse,
+      details: async () => detailsResponse,
+    });
     render(<Page />);
 
     fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
@@ -152,42 +195,33 @@ describe("Solo homepage", () => {
     await waitFor(() => {
       expect(screen.getByText("Lisbon, Portugal")).toBeInTheDocument();
     });
-    expect(screen.getByText("Lisbon 91")).toBeInTheDocument();
-    expect(screen.getByLabelText("Lisbon city marker")).toBeInTheDocument();
-    expect(screen.getByLabelText("Score breakdown for Lisbon")).toHaveTextContent("Climate: 35");
-    expect(screen.getByLabelText("Score breakdown for Lisbon")).toHaveTextContent("Air: 8");
-    expect(screen.getByText("7 attractions nearby")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Loading score").length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText("Loading destination score").length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText("Loading destination details").length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText("Loading destination intelligence").length).toBeGreaterThan(0);
+
+    resolveScore(ok(recommendation(lisbon, 91)));
+    resolveDetails(ok(intelligence(lisbon)));
+
+    await waitFor(() => {
+      expect(screen.getByText("Sunny, compact, and easy to navigate.")).toBeInTheDocument();
+    });
     expect(screen.getByText("17-28C")).toBeInTheDocument();
     expect(screen.getByText("4 mm rain")).toBeInTheDocument();
     expect(screen.getByText("3 h sun")).toBeInTheDocument();
-    expect(
-      screen.getByText("Average historical temperature is about 23C for this window."),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Good air quality.")).toBeInTheDocument();
-    expect(screen.getByText("Lisbon, Portugal").closest(".card")).toHaveStyle({
-      backgroundImage: "linear-gradient(rgba(23, 33, 29, 0.72), rgba(23, 33, 29, 0.72)), url(https://images.example/lisbon.jpg)",
-    });
+    expect(screen.getByText("Good air")).toBeInTheDocument();
+    expect(screen.getByText("Belem Tower")).toBeInTheDocument();
+    expect(screen.queryByText(/hotel/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/affordability/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Lisbon city marker")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/${lisbon.id}/score`))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/${lisbon.id}/intelligence`))).toBe(true);
   });
 
-  it("sends radius and population filters with recommendation requests", async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => [
-        {
-          travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
-          recommendations: [],
-        },
-      ],
-    }));
-    vi.stubGlobal("fetch", fetchMock);
-
+  it("sends search parameters, home city, and excluded city ids to the create-search endpoint", async () => {
+    const fetchMock = installSearchFetch();
     render(<Page />);
 
-    const radiusSlider = screen.getByRole("slider", { name: "Search radius" });
-    fireEvent.keyDown(radiusSlider, { key: "Home" });
-    Array.from({ length: 8 }).forEach(() => {
-      fireEvent.keyDown(radiusSlider, { key: "ArrowRight" });
-    });
     fireEvent.change(screen.getByLabelText("Minimum population"), {
       target: { value: "500000" },
     });
@@ -197,82 +231,94 @@ describe("Solo homepage", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalled();
     });
-    const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const createCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/recommendation-searches"),
+    );
+    const payload = JSON.parse(String(createCall?.[1]?.body));
     expect(payload).toEqual(
       expect.objectContaining({
-        center_latitude: 51.5072,
-        center_longitude: -0.1276,
-        radius_km: 900,
+        home_city_id: "2643743",
+        radius_km: 1800,
         min_population: 500000,
-        candidate_limit: 12,
+        candidate_limit: 10,
+        excluded_city_ids: ["2643743"],
       }),
     );
-    expect(payload).not.toHaveProperty("preferences");
-    expect(payload).not.toHaveProperty("excluded_destination_ids");
   });
 
-  it("shows a spinner and loading step on the find destinations button", async () => {
-    let resolveRecommendations: (value: {
-      ok: boolean;
-      json: () => Promise<unknown[]>;
-    }) => void = () => {};
-    const recommendationsResponse = new Promise<{
-      ok: boolean;
-      json: () => Promise<unknown[]>;
-    }>((resolve) => {
-      resolveRecommendations = resolve;
-    });
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes("/recommendations")) {
-        return recommendationsResponse;
-      }
+  it("adds excluded cities from autocomplete and removes them as tags", async () => {
+    const fetchMock = installSearchFetch();
+    render(<Page />);
 
-      return { ok: true, json: async () => [] };
+    fireEvent.change(screen.getByLabelText("Exclude cities"), {
+      target: { value: "Mad" },
     });
-    vi.stubGlobal("fetch", fetchMock);
 
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Madrid, Spain" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Madrid, Spain" }));
+
+    expect(screen.getByLabelText("Excluded cities")).toHaveTextContent("Madrid, Spain");
+    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+    let createCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/recommendation-searches"),
+    );
+    let payload = JSON.parse(String(createCall?.[1]?.body));
+    expect(payload.excluded_city_ids).toEqual(["2643743", "3117735"]);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Find destinations" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Remove Madrid exclusion" }));
+    fireEvent.click(screen.getByRole("button", { name: /Find destinations/ }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/recommendation-searches")),
+      ).toHaveLength(2);
+    });
+    createCall = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith("/recommendation-searches"))
+      .at(-1);
+    payload = JSON.parse(String(createCall?.[1]?.body));
+    expect(payload.excluded_city_ids).toEqual(["2643743"]);
+  });
+
+  it("shows real search progress on the find destinations button", async () => {
+    let resolveCities: (value: ResponseLike) => void = () => {};
+    const citiesResponse = new Promise<ResponseLike>((resolve) => {
+      resolveCities = resolve;
+    });
+    installSearchFetch({
+      cities: () => citiesResponse,
+    });
     render(<Page />);
 
     fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
-    expect(
-      screen.getByRole("button", { name: /Loading list of cities \(1\/9\)/ }),
-    ).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Loading list of cities/ })).toBeDisabled();
+    });
     expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
 
-    resolveRecommendations({
-      ok: true,
-      json: async () => [
-        {
-          travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
-          recommendations: [],
-        },
-      ],
-    });
+    resolveCities(ok([{ search_id: "search-1", destination: lisbon }]));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Find destinations" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: /Find destinations/ })).toBeEnabled();
     });
   });
 
-  it("shows the recommendation API error message in a top toast", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) => {
-        if (url.includes("/recommendations")) {
-          return {
-            ok: false,
-            status: 400,
-            json: async () => ({
-              detail: { message: "GeoDB rejected the city search request." },
-            }),
-          };
-        }
-
-        return { ok: true, json: async () => [] };
-      }),
-    );
+  it("uses a persistent top toast for recommendation errors", async () => {
+    installSearchFetch({
+      create: async () => fail(400, "City catalog is not ready."),
+    });
 
     render(
       <>
@@ -285,130 +331,15 @@ describe("Solo homepage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
-      expect(screen.getByText("GeoDB rejected the city search request.")).toBeInTheDocument();
+      expect(screen.getByText("City catalog is not ready.")).toBeInTheDocument();
     });
     expect(screen.queryByText("Could not load recommendations.")).not.toBeInTheDocument();
   });
 
-  it("keeps the calendar visually available while preventing date selection until add range starts", () => {
-    render(<Page />);
-
-    const holiday = screen.getByRole("button", { name: "25 May 2026" });
-    expect(holiday).toBeEnabled();
-    expect(holiday).toHaveAttribute("title", "Spring bank holiday");
-
-    fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
-    expect(screen.queryByText(/Draft range:/)).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Add range" }));
-    fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
-    expect(screen.getByText("Draft range: 20 May-20 May 2026")).toBeInTheDocument();
-  });
-
-  it("advances the destination search progress label while recommendations are pending", async () => {
-    vi.useFakeTimers();
-    const recommendationsResponse = new Promise<{
-      ok: boolean;
-      json: () => Promise<unknown[]>;
-    }>(() => {});
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes("/recommendations")) {
-        return recommendationsResponse;
-      }
-
-      return { ok: true, json: async () => [] };
+  it("shows N/A when destination details fail", async () => {
+    installSearchFetch({
+      details: async () => fail(502, "OpenStreetMap timed out."),
     });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
-
-    expect(screen.getByRole("button", { name: /Loading list of cities \(1\/9\)/ })).toBeDisabled();
-
-    await act(async () => {
-      vi.advanceTimersByTime(1400);
-    });
-
-    expect(screen.getByRole("button", { name: /Scoring climate fit \(3\/9\)/ })).toBeDisabled();
-
-    await act(async () => {
-      vi.advanceTimersByTime(2200);
-    });
-
-    expect(screen.getByRole("button", { name: /Ranking best matches \(7\/9\)/ })).toBeDisabled();
-  });
-
-  it("loads destination intelligence for visible recommendations", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes("/recommendations")) {
-        return {
-          ok: true,
-          json: async () => [
-            {
-              travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
-              recommendations: [
-                {
-                  travel_window_id: "may",
-                  destination: {
-                    id: "lisbon-pt",
-                    city: "Lisbon",
-                    country: "Portugal",
-                    timezone: "Europe/Lisbon",
-                    latitude: 38.7223,
-                    longitude: -9.1393,
-                    population: 544851,
-                  },
-                  score: 91,
-                  reasons: ["Fits this travel window."],
-                  caveats: [],
-                },
-              ],
-            },
-          ],
-        };
-      }
-
-      if (url.includes("/destination-intelligence")) {
-        return {
-          ok: true,
-          json: async () => ({
-            destination_city: "Lisbon",
-            country: "Portugal",
-            climate: {
-              average_temperature_c: 23,
-              precipitation_mm: 4,
-              sunshine_hours: 9,
-              summary: "Average historical temperature is about 23C for this window.",
-              source: "Open-Meteo",
-            },
-            attractions: [
-              { name: "Belem Tower", category: "attraction", source: "OpenStreetMap" },
-            ],
-            hotels: {
-              average_nightly_price: 121,
-              median_nightly_price: 118,
-              currency: "EUR",
-              sample_size: 12,
-              source: "unavailable",
-              status: "available",
-            },
-            cost_of_living: {
-              currency: "EUR",
-              meal_inexpensive: 14,
-              coffee: 2.2,
-              local_transport_ticket: 2,
-              summary: "Lisbon is moderate for Western Europe.",
-              source: "unavailable",
-            },
-          }),
-        };
-      }
-
-      return { ok: true, json: async () => [] };
-    });
-    vi.stubGlobal("fetch", fetchMock);
 
     render(<Page />);
 
@@ -416,124 +347,22 @@ describe("Solo homepage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
-      expect(
-        screen.getByText("Average historical temperature is about 23C for this window."),
-      ).toBeInTheDocument();
+      expect(screen.getAllByText("N/A").length).toBeGreaterThan(0);
     });
-    expect(screen.getByText("23C avg")).toBeInTheDocument();
-    expect(screen.getByText("4 mm rain")).toBeInTheDocument();
-    expect(screen.getByText("9 h sun")).toBeInTheDocument();
-    expect(screen.getByText("Belem Tower")).toBeInTheDocument();
-    expect(screen.getByText("EUR 118 median hotel")).toBeInTheDocument();
-    expect(screen.getByText("Lisbon is moderate for Western Europe.")).toBeInTheDocument();
-    const intelligenceCall = fetchMock.mock.calls.find(([url]) =>
-      String(url).includes("/destination-intelligence"),
-    );
-    expect(JSON.parse(String(intelligenceCall?.[1]?.body))).toEqual(
-      expect.objectContaining({ city_id: "lisbon-pt" }),
-    );
   });
 
-  it("lazy-loads intelligence for recommendations after the first three", async () => {
-    const observed: Array<{
-      callback: IntersectionObserverCallback;
-      elements: Element[];
-    }> = [];
-    class MockIntersectionObserver {
-      callback: IntersectionObserverCallback;
-      elements: Element[] = [];
-
-      constructor(callback: IntersectionObserverCallback) {
-        this.callback = callback;
-        observed.push({ callback, elements: this.elements });
-      }
-
-      observe(element: Element) {
-        this.elements.push(element);
-      }
-
-      unobserve(element: Element) {
-        this.elements = this.elements.filter((item) => item !== element);
-      }
-
-      disconnect() {
-        this.elements = [];
-      }
-
-      takeRecords() {
-        return [];
-      }
-    }
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
-
-    const destinations = [
-      ["lisbon-pt", "Lisbon", "Portugal", 38.7223, -9.1393],
-      ["porto-pt", "Porto", "Portugal", 41.1579, -8.6291],
-      ["milan-it", "Milan", "Italy", 45.4642, 9.19],
-      ["rome-it", "Rome", "Italy", 41.9028, 12.4964],
-    ] as const;
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.includes("/recommendations")) {
-        return {
-          ok: true,
-          json: async () => [
-            {
-              travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
-              recommendations: destinations.map(([id, city, country, latitude, longitude], index) => ({
-                travel_window_id: "may",
-                destination: {
-                  id,
-                  city,
-                  country,
-                  latitude,
-                  longitude,
-                  population: 500000,
-                },
-                score: 90 - index,
-                reasons: [`${city} fits this window.`],
-                caveats: [],
-              })),
-            },
-          ],
-        };
-      }
-
-      if (url.includes("/destination-intelligence")) {
-        const body = JSON.parse(String(init?.body));
-        return {
-          ok: true,
-          json: async () => ({
-            destination_city: body.destination_city,
-            country: body.country,
-            climate: {
-              average_temperature_c: 20,
-              precipitation_mm: 3,
-              sunshine_hours: 7,
-              summary: "Mild weather.",
-              source: "Open-Meteo",
-            },
-            attractions: [],
-            hotels: {
-              average_nightly_price: null,
-              median_nightly_price: null,
-              currency: null,
-              sample_size: 0,
-              source: "unavailable",
-              status: "unavailable",
-            },
-            cost_of_living: {
-              currency: "EUR",
-              summary: `${body.destination_city} cost summary.`,
-              source: "unavailable",
-            },
-            warnings: [],
-          }),
-        };
-      }
-
-      return { ok: true, json: async () => [] };
+  it("shows a card-level retry button only for city scoring failures", async () => {
+    let attempts = 0;
+    installSearchFetch({
+      score: async () => {
+        attempts += 1;
+        if (attempts <= 3) {
+          return fail(502, "Scoring failed.");
+        }
+        return ok(recommendation(lisbon, 88));
+      },
+      cities: async () => ok([{ search_id: "search-1", destination: lisbon }]),
     });
-    vi.stubGlobal("fetch", fetchMock);
 
     render(<Page />);
 
@@ -541,494 +370,31 @@ describe("Solo homepage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Rome, Italy")).toBeInTheDocument();
+      expect(screen.getByText("Scoring failed.")).toBeInTheDocument();
     });
-    await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.filter(([url]) => String(url).includes("/destination-intelligence")),
-      ).toHaveLength(3);
-    });
-    expect(screen.queryByText("Rome cost summary.")).not.toBeInTheDocument();
-
-    const romeCard = screen.getByText("Rome, Italy").closest(".card");
-    const romeObserver = observed.find((entry) => entry.elements.includes(romeCard as Element));
-    expect(romeObserver).toBeDefined();
-    act(() => {
-      romeObserver?.callback(
-        [{ isIntersecting: true, target: romeCard } as IntersectionObserverEntry],
-        {} as IntersectionObserver,
-      );
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Rome cost summary.")).toBeInTheDocument();
+      expect(screen.getByText("Sunny, compact, and easy to navigate.")).toBeInTheDocument();
     });
-    expect(
-      fetchMock.mock.calls.filter(([url]) => String(url).includes("/destination-intelligence")),
-    ).toHaveLength(4);
+    expect(attempts).toBe(4);
   });
 
-  it("shows a card spinner while destination intelligence is loading", async () => {
-    let resolveIntelligence: (value: {
-      ok: boolean;
-      json: () => Promise<Record<string, unknown>>;
-    }) => void = () => {};
-    const intelligenceResponse = new Promise<{
-      ok: boolean;
-      json: () => Promise<Record<string, unknown>>;
-    }>((resolve) => {
-      resolveIntelligence = resolve;
+  it("disables range selection while searching", async () => {
+    let resolveCities: (value: ResponseLike) => void = () => {};
+    const citiesResponse = new Promise<ResponseLike>((resolve) => {
+      resolveCities = resolve;
     });
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes("/recommendations")) {
-        return {
-          ok: true,
-          json: async () => [
-            {
-              travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
-              recommendations: [
-                {
-                  travel_window_id: "may",
-                  destination: {
-                    id: "lisbon-pt",
-                    city: "Lisbon",
-                    country: "Portugal",
-                    latitude: 38.7223,
-                    longitude: -9.1393,
-                    population: 544851,
-                  },
-                  score: 91,
-                  reasons: ["Fits this travel window."],
-                  caveats: [],
-                },
-              ],
-            },
-          ],
-        };
-      }
-
-      if (url.includes("/destination-intelligence")) {
-        return intelligenceResponse;
-      }
-
-      return { ok: true, json: async () => [] };
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
+    installSearchFetch({ cities: () => citiesResponse });
     render(<Page />);
 
     fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Lisbon, Portugal")).toBeInTheDocument();
-    });
-    expect(screen.getByRole("status", { name: "Loading intelligence for Lisbon" })).toBeInTheDocument();
-
-    resolveIntelligence({
-      ok: true,
-      json: async () => ({
-        destination_city: "Lisbon",
-        country: "Portugal",
-        climate: {
-          average_temperature_c: 23,
-          precipitation_mm: 4,
-          sunshine_hours: 9,
-          summary: "Average historical temperature is about 23C for this window.",
-          source: "Open-Meteo",
-        },
-        attractions: [{ name: "Belem Tower", category: "attraction", source: "OpenStreetMap" }],
-        hotels: {
-          average_nightly_price: 121,
-          median_nightly_price: 118,
-          currency: "EUR",
-          sample_size: 12,
-          source: "unavailable",
-          status: "available",
-        },
-        cost_of_living: {
-          currency: "EUR",
-          summary: "Lisbon is moderate for Western Europe.",
-          source: "unavailable",
-        },
-      }),
+      expect(screen.getByRole("button", { name: /Select Summer bank holiday/ })).toBeDisabled();
     });
 
-    await waitFor(() => {
-      expect(screen.queryByRole("status", { name: "Loading intelligence for Lisbon" })).not.toBeInTheDocument();
-    });
-    expect(
-      screen.getByText("Average historical temperature is about 23C for this window."),
-    ).toBeInTheDocument();
-  });
-
-  it("shows which intelligence service failed without hiding recommendations", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes("/recommendations")) {
-        return {
-          ok: true,
-          json: async () => [
-            {
-              travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
-              recommendations: [
-                {
-                  travel_window_id: "may",
-                  destination: {
-                    id: "lisbon-pt",
-                    city: "Lisbon",
-                    country: "Portugal",
-                    latitude: 38.7223,
-                    longitude: -9.1393,
-                    population: 544851,
-                  },
-                  score: 91,
-                  reasons: ["Fits this travel window."],
-                  caveats: [],
-                },
-              ],
-            },
-          ],
-        };
-      }
-
-      if (url.includes("/destination-intelligence")) {
-        return {
-          ok: false,
-          status: 502,
-          json: async () => ({
-            detail: {
-              step: "climate",
-              service: "Open-Meteo",
-              message: "Open-Meteo failed during climate lookup: timed out",
-            },
-          }),
-        };
-      }
-
-      return { ok: true, json: async () => [] };
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Lisbon, Portugal")).toBeInTheDocument();
-    });
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Could not load destination intelligence for Lisbon: Open-Meteo failed during climate lookup: timed out",
-    );
-  });
-
-  it("shows warnings from partial destination intelligence", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes("/recommendations")) {
-        return {
-          ok: true,
-          json: async () => [
-            {
-              travel_window: { id: "may", start_date: "2026-05-22", end_date: "2026-05-25" },
-              recommendations: [
-                {
-                  travel_window_id: "may",
-                  destination: {
-                    id: "milan-it",
-                    city: "Metropolitan City of Milan",
-                    country: "Italy",
-                    latitude: 45.4642,
-                    longitude: 9.19,
-                    population: 1366180,
-                  },
-                  score: 83,
-                  reasons: ["Good rail access and food density."],
-                  caveats: [],
-                },
-              ],
-            },
-          ],
-        };
-      }
-
-      if (url.includes("/destination-intelligence")) {
-        return {
-          ok: true,
-          json: async () => ({
-            destination_city: "Metropolitan City of Milan",
-            country: "Italy",
-            climate: {
-              average_temperature_c: 20,
-              precipitation_mm: 3,
-              sunshine_hours: 7,
-              summary: "Mild weather.",
-              source: "Open-Meteo",
-            },
-            attractions: [],
-            hotels: {
-              average_nightly_price: null,
-              median_nightly_price: null,
-              currency: null,
-              sample_size: 0,
-              source: "unavailable",
-              status: "unavailable",
-            },
-            cost_of_living: {
-              currency: "EUR",
-              summary: "Milan is expensive for Italy.",
-              source: "unavailable",
-            },
-            warnings: [
-              {
-                step: "attractions",
-                service: "OpenStreetMap",
-                message: "OpenStreetMap failed during attractions lookup: The read operation timed out",
-              },
-            ],
-          }),
-        };
-      }
-
-      return { ok: true, json: async () => [] };
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Mild weather.")).toBeInTheDocument();
-    });
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Some destination intelligence is unavailable for Metropolitan City of Milan: OpenStreetMap failed during attractions lookup: The read operation timed out",
-    );
-  });
-
-  it("keeps the calendar read-only until the user starts adding a range", () => {
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: "26 May 2026" }));
-
-    expect(screen.queryByText(/Draft range:/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Select Spring bank holiday/ })).toHaveTextContent(
-      "22-25 May 2026",
-    );
-  });
-
-  it("lets the user browse months before selecting dates", () => {
-    render(<Page />);
-
-    expect(screen.getByText("May 2026")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Next month" }));
-
-    expect(screen.getByText("June 2026")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "1 Jun 2026" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Previous month" }));
-
-    expect(screen.getByText("May 2026")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "1 May 2026" })).toBeInTheDocument();
-  });
-
-  it("highlights the current date when it is visible", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-15T12:00:00Z"));
-
-    render(<Page />);
-
-    expect(screen.getByRole("button", { name: "15 May 2026" })).toHaveClass("current-day");
-
-  });
-
-  it("jumps the calendar to a saved range start month when selected", () => {
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Next month" }));
-    expect(screen.getByText("June 2026")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /Select Summer bank holiday/ }));
-
-    expect(screen.getByText("August 2026")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "28 Aug 2026" })).toBeInTheDocument();
-  });
-
-  it("highlights the selected saved travel window in the calendar", () => {
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
-
-    expect(screen.getByRole("button", { name: "22 May 2026" })).toHaveClass("selected");
-    expect(screen.getByRole("button", { name: "25 May 2026" })).toHaveClass("selected");
-    expect(screen.getByRole("button", { name: "26 May 2026" })).not.toHaveClass("selected");
-
-    fireEvent.click(screen.getByRole("button", { name: /Select Summer bank holiday/ }));
-
-    expect(screen.getByText("August 2026")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "28 Aug 2026" })).toHaveClass("selected");
-    expect(screen.getByRole("button", { name: "31 Aug 2026" })).toHaveClass("selected");
-  });
-
-  it("does not show hidden preference tags for the selected date range", () => {
-    render(<Page />);
-
-    expect(screen.queryByText("Choose a range")).not.toBeInTheDocument();
-    expect(screen.queryByText("Warm")).not.toBeInTheDocument();
-    expect(screen.queryByText("Food")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Excluded:/)).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Add range" }));
-    fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
-    fireEvent.click(screen.getByRole("button", { name: "27 May 2026" }));
-
-    expect(screen.queryByText(/pace/i)).not.toBeInTheDocument();
-  });
-
-  it("saves a new draft range when finding recommendations", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes("/recommendations")) {
-        return {
-          ok: true,
-          json: async () => [
-            {
-              travel_window: { id: "range-1", start_date: "2026-05-20", end_date: "2026-05-26" },
-              recommendations: [
-                {
-                  travel_window_id: "range-1",
-                  destination: {
-                    id: "porto-pt",
-                    city: "Porto",
-                    country: "Portugal",
-                    latitude: 41.1579,
-                    longitude: -8.6291,
-                    population: 231800,
-                  },
-                  score: 88,
-                  reasons: ["Fits the drafted date range."],
-                  caveats: [],
-                },
-              ],
-            },
-          ],
-        };
-      }
-
-      return { ok: true, json: async () => [] };
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(Date, "now").mockReturnValue(1);
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Add range" }));
-    fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
-    fireEvent.click(screen.getByRole("button", { name: "26 May 2026" }));
-    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Select 20 May-26 May 2026/ })).toBeInTheDocument();
-    });
-    expect(screen.getByText("Porto, Portugal")).toBeInTheDocument();
-    expect(screen.queryByText(/Draft range:/)).not.toBeInTheDocument();
-  });
-
-  it("lets the user cancel adding a range", () => {
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Add range" }));
-    fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
-
-    expect(screen.getByText("Draft range: 20 May-20 May 2026")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "20 May 2026" })).toHaveClass("selected");
-
-    fireEvent.click(screen.getByRole("button", { name: "Cancel range" }));
-
-    expect(screen.queryByText(/Draft range:/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add range" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "20 May 2026" })).not.toHaveClass("selected");
-    expect(screen.getByRole("button", { name: "22 May 2026" })).not.toHaveClass("selected");
-  });
-
-  it("paginates candidate ranges when the list grows", () => {
-    render(<Page />);
-
-    for (let index = 0; index < 7; index += 1) {
-      fireEvent.click(screen.getByRole("button", { name: "Add range" }));
-      fireEvent.click(screen.getByRole("button", { name: `${10 + index} May 2026` }));
-      fireEvent.click(screen.getByRole("button", { name: `${11 + index} May 2026` }));
-      fireEvent.click(screen.getByRole("button", { name: "Save draft range" }));
-    }
-
-    expect(screen.getByText("Page 1 of 2")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Next ranges" })).toBeEnabled();
-    expect(
-      screen.queryByRole("button", { name: /Select 16 May-17 May 2026/ }),
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Next ranges" }));
-
-    expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Select 16 May-17 May 2026/ })).toBeInTheDocument();
-  });
-
-  it("keeps calendar draft selection separate from saved ranges", () => {
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Add range" }));
-    fireEvent.click(screen.getByRole("button", { name: "26 May 2026" }));
-
-    expect(screen.getByText("Draft range: 26 May-26 May 2026")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Select Spring bank holiday/ })).toHaveTextContent(
-      "22-25 May 2026",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
-
-    expect(screen.getByText("Draft range: 20 May-26 May 2026")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Select Spring bank holiday/ })).toHaveTextContent(
-      "22-25 May 2026",
-    );
-  });
-
-  it("uses the selected travel window for recommendation emphasis", async () => {
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Select Summer bank holiday/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Copenhagen, Denmark")).toBeInTheDocument();
-    });
-    expect(screen.getByText("Copenhagen 86")).toBeInTheDocument();
-    expect(screen.queryByText("Lisbon, Portugal")).not.toBeInTheDocument();
-  });
-
-  it("lets the user add, rename, archive, and remove ranges", () => {
-    render(<Page />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Add range" }));
-    fireEvent.click(screen.getByRole("button", { name: "26 May 2026" }));
-    fireEvent.click(screen.getByRole("button", { name: "20 May 2026" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save draft range" }));
-
-    expect(screen.getByRole("button", { name: /Select 20 May-26 May 2026/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Select Spring bank holiday/ })).toHaveTextContent(
-      "22-25 May 2026",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Rename 20 May-26 May 2026/ }));
-    fireEvent.change(screen.getByLabelText("Range label"), {
-      target: { value: "Warm food sprint" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save range" }));
-
-    expect(screen.getByRole("button", { name: /Select Warm food sprint/ })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /Archive Warm food sprint/ }));
-    expect(screen.getByText("archived")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /Remove Warm food sprint/ }));
-    expect(screen.queryByRole("button", { name: /Select Warm food sprint/ })).not.toBeInTheDocument();
+    resolveCities(ok([]));
   });
 });

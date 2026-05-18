@@ -4,36 +4,25 @@ from collections.abc import Callable
 from datetime import date, timedelta
 from typing import TypeVar
 
-from solo_api.attractions import AttractionLookupError, fetch_attractions
+from solo_api.attraction_service import resolve_city_attractions
+from solo_api.attractions import AttractionLookupError
 from solo_api.cache import TtlCache
-from solo_api.cost_of_living import unavailable_cost_of_living_summary
-from solo_api.hotels import summarize_hotel_prices
 from solo_api.models import (
     DestinationIntelligence,
     DestinationIntelligenceRequest,
     DestinationIntelligenceWarning,
 )
 from solo_api.storage import (
-    get_api_cache,
     get_climate_normal,
-    get_stored_attractions,
-    set_api_cache,
-    store_attractions,
     store_climate_normal,
 )
 from solo_api.weather import fetch_month_climate_summary
 
 INTELLIGENCE_CACHE_TTL_SECONDS = 60 * 60 * 6
+INTELLIGENCE_CACHE_VERSION = "v3"
 INTELLIGENCE_CACHE: TtlCache[DestinationIntelligence] = TtlCache(
     ttl_seconds=INTELLIGENCE_CACHE_TTL_SECONDS
 )
-
-CITY_CODES = {
-    ("Lisbon", "Portugal"): "LIS",
-    ("Porto", "Portugal"): "OPO",
-    ("Seville", "Spain"): "SVQ",
-    ("Copenhagen", "Denmark"): "CPH",
-}
 
 T = TypeVar("T")
 
@@ -52,6 +41,7 @@ class DestinationIntelligenceStepError(Exception):
 def _cache_key(request: DestinationIntelligenceRequest) -> str:
     raw = "|".join(
         [
+            INTELLIGENCE_CACHE_VERSION,
             request.destination_city,
             request.country,
             str(request.latitude),
@@ -61,10 +51,6 @@ def _cache_key(request: DestinationIntelligenceRequest) -> str:
         ]
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _shared_cache_key(local_key: str) -> str:
-    return f"destination_intelligence:{local_key}"
 
 
 def _dominant_month(start_date: date, end_date: date) -> int:
@@ -105,33 +91,20 @@ def build_destination_intelligence(
     if cached is not None:
         return cached
 
-    shared_key = _shared_cache_key(key)
-    cached_payload = get_api_cache(shared_key)
-    if cached_payload is not None:
-        intelligence = DestinationIntelligence.model_validate(cached_payload)
-        INTELLIGENCE_CACHE.set(key, intelligence)
-        return intelligence
-
-    city_code = CITY_CODES.get(
-        (request.destination_city, request.country),
-        request.destination_city[:3].upper(),
-    )
     warnings: list[DestinationIntelligenceWarning] = []
     climate_month = _dominant_month(request.start_date, request.end_date)
     try:
-        attractions = get_stored_attractions(request.city_id) if request.city_id else []
-        if not attractions:
-            attractions = _run_step(
-                step="attractions",
-                service="OpenStreetMap/Wikipedia",
-                action=lambda: fetch_attractions(
-                    latitude=request.latitude,
-                    longitude=request.longitude,
-                    city=request.destination_city,
-                ),
-            )
-            if request.city_id:
-                store_attractions(city_id=request.city_id, attractions=attractions)
+        attractions = _run_step(
+            step="attractions",
+            service="OpenStreetMap/Wikipedia/Wikidata",
+            action=lambda: resolve_city_attractions(
+                city_id=request.city_id,
+                city=request.destination_city,
+                country=request.country,
+                latitude=request.latitude,
+                longitude=request.longitude,
+            ),
+        )
     except DestinationIntelligenceStepError as error:
         attractions = []
         warnings.append(_warning_from_error(error))
@@ -165,28 +138,8 @@ def build_destination_intelligence(
         country=request.country,
         climate=climate,
         attractions=attractions,
-        hotels=_run_step(
-            step="hotels",
-            service="Hotel pricing",
-            action=lambda: summarize_hotel_prices(
-                city_code=city_code,
-                check_in_date=request.start_date,
-                check_out_date=request.end_date,
-            ),
-        ),
-        cost_of_living=_run_step(
-            step="cost_of_living",
-            service="Cost of living",
-            action=lambda: unavailable_cost_of_living_summary(request.destination_city),
-        ),
         warnings=warnings,
     )
     if not warnings:
         INTELLIGENCE_CACHE.set(key, intelligence)
-        set_api_cache(
-            key=shared_key,
-            payload=intelligence.model_dump(mode="json"),
-            ttl_seconds=INTELLIGENCE_CACHE_TTL_SECONDS,
-            provider="destination_intelligence",
-        )
     return intelligence

@@ -1,42 +1,23 @@
-import httpx
-
-from solo_api.http import DEFAULT_TIMEOUT
 from solo_api.models import CitySuggestion
+from solo_api.storage import find_nearest_city, search_catalog_cities
 
-GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
+
+def _suggestion_from_destination(destination) -> CitySuggestion:
+    return CitySuggestion(
+        id=destination.id,
+        name=destination.city,
+        country=destination.country,
+        admin1=destination.region,
+        latitude=destination.latitude,
+        longitude=destination.longitude,
+        timezone=destination.timezone,
+    )
 
 
 def search_cities(query: str, count: int = 5) -> list[CitySuggestion]:
-    normalized_query = query.strip()
-    if len(normalized_query) < 2:
-        return []
+    return [_suggestion_from_destination(city) for city in search_catalog_cities(query, count)]
 
-    response = httpx.get(
-        GEOCODING_URL,
-        params={
-            "name": normalized_query,
-            "count": count,
-            "language": "en",
-            "format": "json",
-        },
-        timeout=DEFAULT_TIMEOUT,
-    )
-    response.raise_for_status()
-    payload = response.json()
 
-    suggestions: list[CitySuggestion] = []
-    for item in payload.get("results", []):
-        if not item.get("name") or not item.get("country"):
-            continue
-        suggestions.append(
-            CitySuggestion(
-                id=str(item["id"]),
-                name=item["name"],
-                country=item["country"],
-                admin1=item.get("admin1"),
-                latitude=item["latitude"],
-                longitude=item["longitude"],
-                timezone=item.get("timezone"),
-            )
-        )
-    return suggestions
+def nearest_city(latitude: float, longitude: float) -> CitySuggestion | None:
+    destination = find_nearest_city(latitude=latitude, longitude=longitude)
+    return _suggestion_from_destination(destination) if destination else None

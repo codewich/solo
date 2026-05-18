@@ -2,8 +2,13 @@ import type {
   CitySuggestion,
   DestinationIntelligence,
   DestinationIntelligenceRequest,
+  NearestCityRequest,
+  Recommendation,
   RecommendationGroup,
   RecommendationRequest,
+  RecommendationSearchCity,
+  RecommendationSearchCreateRequest,
+  RecommendationSearchCreateResponse,
 } from "./types";
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:45655";
@@ -64,6 +69,97 @@ export async function fetchCitySuggestions(query: string): Promise<CitySuggestio
 
   if (!response.ok) {
     throw await responseError(response, `City suggestion request failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchNearestCity(request: NearestCityRequest): Promise<CitySuggestion> {
+  const response = await fetch(`${apiBaseUrl}/geocode/nearest-city`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    throw await responseError(response, `Nearest city request failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function createRecommendationSearch(
+  request: RecommendationSearchCreateRequest,
+): Promise<RecommendationSearchCreateResponse> {
+  const response = await fetch(`${apiBaseUrl}/recommendation-searches`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    throw await responseError(response, `Recommendation search failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchRecommendationSearchCities(
+  searchId: string,
+): Promise<RecommendationSearchCity[]> {
+  const response = await fetch(`${apiBaseUrl}/recommendation-searches/${searchId}/cities`);
+
+  if (!response.ok) {
+    throw await responseError(response, `City candidate request failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchSavedRecommendationSearchResults(
+  searchId: string,
+): Promise<Recommendation[]> {
+  const response = await fetch(`${apiBaseUrl}/recommendation-searches/${searchId}/recommendations`);
+
+  if (!response.ok) {
+    throw await responseError(response, `Saved recommendation request failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function scoreRecommendationSearchCity(
+  searchId: string,
+  cityId: string,
+): Promise<Recommendation> {
+  const response = await fetch(
+    `${apiBaseUrl}/recommendation-searches/${searchId}/cities/${encodeURIComponent(cityId)}/score`,
+    { method: "POST" },
+  );
+
+  if (!response.ok) {
+    throw await responseError(response, `City scoring request failed with ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchRecommendationSearchCityIntelligence(
+  searchId: string,
+  cityId: string,
+): Promise<DestinationIntelligence> {
+  const response = await fetch(
+    `${apiBaseUrl}/recommendation-searches/${searchId}/cities/${encodeURIComponent(
+      cityId,
+    )}/intelligence`,
+    { method: "POST" },
+  );
+
+  if (!response.ok) {
+    throw await responseError(
+      response,
+      `Destination intelligence request failed with ${response.status}`,
+    );
   }
 
   return response.json();

@@ -2,7 +2,6 @@
 import argparse
 import csv
 from pathlib import Path
-lqSnfA3v0347KHbi
 
 CITIES_COLUMNS = [
     "id",
@@ -113,12 +112,6 @@ def main() -> None:
     )
     parser.add_argument("input", type=Path, help="Path to cities15000.txt")
     parser.add_argument("output", type=Path, help="Output CSV path")
-    parser.add_argument(
-        "--scope",
-        choices=["all", "europe"],
-        default="europe",
-        help="Country filter to apply before writing rows.",
-    )
     args = parser.parse_args()
 
     row_count = 0
@@ -131,8 +124,6 @@ def main() -> None:
         for line in source:
             row = convert_row(line.rstrip("\n").split("\t"))
             if row is None:
-                continue
-            if args.scope == "europe" and row["country_code"] not in EUROPE_COUNTRY_CODES:
                 continue
             writer.writerow(row)
             row_count += 1

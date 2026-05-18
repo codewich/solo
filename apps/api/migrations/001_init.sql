@@ -76,7 +76,6 @@ create table if not exists recommendation_scores (
   climate_score integer not null,
   attraction_score integer not null,
   popularity_score integer not null,
-  affordability_score integer not null,
   air_quality_score integer not null default 0,
   final_score integer not null,
   calculated_at timestamptz not null default now(),

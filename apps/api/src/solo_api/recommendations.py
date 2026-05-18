@@ -6,7 +6,6 @@ from solo_api.models import (
     AirQualitySummary,
     ClimateSummary,
     CoordinatesResult,
-    CostOfLivingSummary,
     Destination,
     Recommendation,
     RecommendationGroup,
@@ -41,7 +40,6 @@ def _signals_from_value(value: DestinationSignals | dict[str, Any]) -> Destinati
                 status="unavailable",
             ),
         ),
-        cost_of_living=value["cost_of_living"],
         warnings=value.get("warnings", []),
     )
 
@@ -88,18 +86,6 @@ def _popularity_score(summary: str | None, destination: Destination) -> int:
     return min(20, score)
 
 
-def _affordability_score(cost: CostOfLivingSummary, destination: Destination) -> int:
-    if cost.status == "unavailable":
-        return 10
-    score = 10
-    if cost.meal_inexpensive is not None:
-        if cost.meal_inexpensive <= 12:
-            score += 4
-        elif cost.meal_inexpensive >= 22:
-            score -= 4
-    return max(0, min(20, score))
-
-
 def _air_quality_score(air_quality: AirQualitySummary) -> int:
     if air_quality.status == "unavailable":
         return 6
@@ -127,28 +113,20 @@ def score_destination(
     climate_score = _climate_score(signals.climate)
     attraction_score = _attraction_score(signals.attraction_count, destination)
     popularity_score = _popularity_score(signals.summary, destination)
-    affordability_score = _affordability_score(signals.cost_of_living, destination)
     air_quality_score = _air_quality_score(signals.air_quality)
 
     breakdown = RecommendationScoreBreakdown(
         climate_score=climate_score,
         attraction_score=attraction_score,
         popularity_score=popularity_score,
-        affordability_score=affordability_score,
         air_quality_score=air_quality_score,
     )
-    score = (
-        breakdown.climate_score
-        + breakdown.attraction_score
-        + breakdown.popularity_score
-        + breakdown.affordability_score
-    )
+    score = breakdown.climate_score + breakdown.attraction_score + breakdown.popularity_score
 
     reasons = [
         f"Climate fit contributes {breakdown.climate_score} points.",
         f"Live attraction density contributes {breakdown.attraction_score} points.",
         f"Popularity context contributes {breakdown.popularity_score} points.",
-        f"Affordability contributes {breakdown.affordability_score} points.",
         "Air quality is shown as context and is not part of the travel score.",
     ]
 
@@ -265,6 +243,7 @@ def recommended_destinations_search(
             attraction_count=item.attraction_count,
             summary=item.summary,
             image_url=item.image_url,
+            climate=item.climate,
             air_quality=item.air_quality,
             warning=item.warning,
         )

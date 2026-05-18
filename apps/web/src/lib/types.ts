@@ -37,11 +37,12 @@ export type Recommendation = {
   score: number;
   reasons: string[];
   caveats: string[];
+  status?: "ready" | "error";
+  warning?: string | null;
   score_breakdown?: {
     climateScore: number;
     attractionScore: number;
     popularityScore: number;
-    affordabilityScore: number;
     airQualityScore?: number;
   } | null;
   attraction_count?: number;
@@ -76,7 +77,6 @@ export type Recommendation = {
     source: string;
     status: "available" | "unavailable";
   } | null;
-  warning?: string | null;
 };
 
 export type RecommendationGroup = {
@@ -133,25 +133,34 @@ export type DestinationIntelligence = {
     description?: string | null;
     source: string;
   }>;
-  hotels: {
-    average_nightly_price: number | null;
-    median_nightly_price: number | null;
-    currency: string | null;
-    sample_size: number;
-    source: string;
-    status: "available" | "unavailable";
-  };
-  cost_of_living: {
-    currency: string;
-    meal_inexpensive?: number | null;
-    coffee?: number | null;
-    local_transport_ticket?: number | null;
-    summary: string;
-    source: string;
-  };
   warnings?: Array<{
     step: string;
     service: string;
     message: string;
   }>;
 };
+
+export type RecommendationSearchCreateRequest = {
+  travel_window: TravelWindow;
+  home_city_id: string;
+  radius_km: number;
+  min_population: number;
+  candidate_limit: number;
+  excluded_city_ids?: string[];
+  user_email?: string | null;
+  user_name?: string | null;
+  provider_subject?: string | null;
+};
+
+export type RecommendationSearchCreateResponse = {
+  id: string;
+  travel_window_id: string;
+  status: "created";
+};
+
+export type RecommendationSearchCity = {
+  search_id: string;
+  destination: Destination;
+};
+
+export type NearestCityRequest = Coordinates;

@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+from uuid import uuid4
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from solo_api import database
 from solo_api.cache import RedisJsonCache
+from solo_api.cache import ATTRACTIONS_TTL_SECONDS
 from solo_api.config import get_env
-from solo_api.models import AttractionSummary, ClimateSummary, Destination, RecommendationScoreBreakdown
+from solo_api.models import (
+    AttractionSummary,
+    ClimateSummary,
+    Destination,
+    Recommendation,
+    RecommendationScoreBreakdown,
+    TravelWindow,
+)
 
 REDIS_CACHE = RedisJsonCache(get_env("REDIS_URL") or get_env("REDIS_KV_URL"))
 
@@ -24,7 +33,32 @@ def stable_cache_key(namespace: str, payload: dict[str, Any]) -> str:
     return f"{namespace}:{hashlib.sha256(serialized.encode('utf-8')).hexdigest()}"
 
 
+def is_provider_cache_disabled() -> bool:
+    return (get_env("SOLO_DISABLE_PROVIDER_CACHE") or "").lower() in {"1", "true", "yes"}
+
+
+def _slug(value: str) -> str:
+    return "-".join(value.strip().casefold().replace("_", "-").split())
+
+
+def city_provider_cache_key(
+    *,
+    city_id: str | None,
+    city: str,
+    country: str,
+    namespace: str,
+    version: str = "v1",
+) -> str:
+    if city_id:
+        city_part = _slug(city_id)
+    else:
+        city_part = f"{_slug(city)}:{_slug(country)}"
+    return f"city:{city_part}:{namespace}:{version}"
+
+
 def get_api_cache(key: str) -> Any | None:
+    if is_provider_cache_disabled():
+        return None
     raw_payload = REDIS_CACHE.get(key)
     if raw_payload is not None:
         return json.loads(raw_payload)
@@ -43,6 +77,8 @@ def get_api_cache(key: str) -> Any | None:
 
 
 def set_api_cache(key: str, payload: Any, ttl_seconds: int, provider: str) -> None:
+    if is_provider_cache_disabled():
+        return
     serialized_payload = json.dumps(payload, default=_json_default)
     REDIS_CACHE.set(key, serialized_payload, ttl_seconds)
     if not database.is_database_configured():
@@ -131,6 +167,83 @@ def find_city_candidates(
         ],
     )
     return [Destination.model_validate(row) for row in rows]
+
+
+def get_city(city_id: str) -> Destination | None:
+    if not database.is_database_configured():
+        return None
+
+    row = database.fetch_one(
+        """
+        select
+          id,
+          name as city,
+          country_name as country,
+          timezone,
+          latitude,
+          longitude,
+          population,
+          region,
+          country_code
+        from cities
+        where id = %s
+        """,
+        [city_id],
+    )
+    return Destination.model_validate(row) if row else None
+
+
+def search_catalog_cities(query: str, limit: int = 5) -> list[Destination]:
+    normalized_query = query.strip()
+    if not database.is_database_configured() or len(normalized_query) < 2:
+        return []
+
+    rows = database.fetch_all(
+        """
+        select
+          id,
+          name as city,
+          country_name as country,
+          timezone,
+          latitude,
+          longitude,
+          population,
+          region,
+          country_code
+        from cities
+        where name ilike %s
+        order by population desc nulls last
+        limit %s
+        """,
+        [f"{normalized_query}%", limit],
+    )
+    return [Destination.model_validate(row) for row in rows]
+
+
+def find_nearest_city(*, latitude: float, longitude: float) -> Destination | None:
+    if not database.is_database_configured():
+        return None
+
+    row = database.fetch_one(
+        """
+        select
+          id,
+          name as city,
+          country_name as country,
+          timezone,
+          latitude,
+          longitude,
+          population,
+          region,
+          country_code
+        from cities
+        order by geography(ST_MakePoint(longitude, latitude))
+          <-> geography(ST_MakePoint(%s, %s))
+        limit 1
+        """,
+        [longitude, latitude],
+    )
+    return Destination.model_validate(row) if row else None
 
 
 def upsert_cities(destinations: list[Destination]) -> None:
@@ -318,6 +431,49 @@ def store_attractions(*, city_id: str, attractions: list[AttractionSummary]) -> 
         connection.commit()
 
 
+def get_cached_attractions(
+    *,
+    city_id: str | None,
+    city: str,
+    country: str,
+) -> list[AttractionSummary] | None:
+    payload = get_api_cache(
+        city_provider_cache_key(
+            city_id=city_id,
+            city=city,
+            country=country,
+            namespace="attractions",
+            version="v2",
+        )
+    )
+    if payload is None:
+        return None
+    if not isinstance(payload, list):
+        return []
+    return [AttractionSummary.model_validate(item) for item in payload]
+
+
+def set_cached_attractions(
+    *,
+    city_id: str | None,
+    city: str,
+    country: str,
+    attractions: list[AttractionSummary],
+) -> None:
+    set_api_cache(
+        key=city_provider_cache_key(
+            city_id=city_id,
+            city=city,
+            country=country,
+            namespace="attractions",
+            version="v2",
+        ),
+        payload=[attraction.model_dump(mode="json") for attraction in attractions],
+        ttl_seconds=ATTRACTIONS_TTL_SECONDS,
+        provider="attractions",
+    )
+
+
 def store_recommendation_score(
     *,
     city_id: str,
@@ -331,14 +487,13 @@ def store_recommendation_score(
         """
         insert into recommendation_scores (
           city_id, travel_window_id, climate_score, attraction_score,
-          popularity_score, affordability_score, air_quality_score, final_score
+          popularity_score, air_quality_score, final_score
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s)
+        values (%s, %s, %s, %s, %s, %s, %s)
         on conflict (city_id, travel_window_id) do update set
           climate_score = excluded.climate_score,
           attraction_score = excluded.attraction_score,
           popularity_score = excluded.popularity_score,
-          affordability_score = excluded.affordability_score,
           air_quality_score = excluded.air_quality_score,
           final_score = excluded.final_score,
           calculated_at = now()
@@ -349,8 +504,227 @@ def store_recommendation_score(
             breakdown.climate_score,
             breakdown.attraction_score,
             breakdown.popularity_score,
-            breakdown.affordability_score,
             breakdown.air_quality_score,
             final_score,
         ],
     )
+
+
+def ensure_user(
+    *,
+    email: str | None,
+    name: str | None = None,
+    image_url: str | None = None,
+    provider: str = "google",
+    provider_subject: str | None = None,
+) -> str:
+    if not database.is_database_configured():
+        return "demo-user"
+
+    user_email = email or "demo@solo.local"
+    subject = provider_subject or user_email
+    existing = database.fetch_one(
+        """
+        select u.id
+        from users u
+        join user_auth_accounts a on a.user_id = u.id
+        where a.provider = %s
+          and a.provider_subject = %s
+        """,
+        [provider, subject],
+    )
+    if existing:
+        return str(existing["id"])
+
+    user_id = str(uuid4())
+    with database.connect() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                insert into users (id, email, name, image_url)
+                values (%s, %s, %s, %s)
+                on conflict (email) do update set
+                  name = coalesce(excluded.name, users.name),
+                  image_url = coalesce(excluded.image_url, users.image_url),
+                  updated_at = now()
+                returning id
+                """,
+                [user_id, user_email, name, image_url],
+            )
+            user_id = str(cursor.fetchone()["id"])
+            cursor.execute(
+                """
+                insert into user_auth_accounts (user_id, provider, provider_subject)
+                values (%s, %s, %s)
+                on conflict (provider, provider_subject) do nothing
+                """,
+                [user_id, provider, subject],
+            )
+        connection.commit()
+    return user_id
+
+
+def create_or_replace_recommendation_search(
+    *,
+    user_id: str,
+    travel_window: TravelWindow,
+    home_city_id: str,
+    radius_km: int,
+    min_population: int,
+    candidate_limit: int,
+    excluded_city_ids: list[str],
+) -> str:
+    if not database.is_database_configured():
+        return f"memory:{user_id}:{travel_window.id}"
+
+    search_id = str(uuid4())
+    with database.connect() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                insert into travel_windows (id, user_id, label, start_date, end_date, status)
+                values (%s, %s, %s, %s, %s, %s)
+                on conflict (id) do update set
+                  label = excluded.label,
+                  start_date = excluded.start_date,
+                  end_date = excluded.end_date,
+                  status = excluded.status,
+                  updated_at = now()
+                """,
+                [
+                    travel_window.id,
+                    user_id,
+                    travel_window.label,
+                    travel_window.start_date,
+                    travel_window.end_date,
+                    travel_window.status,
+                ],
+            )
+            existing = cursor.execute(
+                """
+                select id, home_city_id, radius_km, min_population, candidate_limit
+                from recommendation_searches
+                where user_id = %s and travel_window_id = %s
+                """,
+                [user_id, travel_window.id],
+            ).fetchone()
+            should_replace_results = True
+            if existing:
+                search_id = str(existing["id"])
+                existing_exclusions = cursor.execute(
+                    """
+                    select city_id
+                    from recommendation_excluded_cities
+                    where search_id = %s
+                    """,
+                    [search_id],
+                ).fetchall()
+                should_replace_results = (
+                    existing["home_city_id"] != home_city_id
+                    or existing["radius_km"] != radius_km
+                    or existing["min_population"] != min_population
+                    or existing["candidate_limit"] != candidate_limit
+                    or {row["city_id"] for row in existing_exclusions} != set(excluded_city_ids)
+                )
+            cursor.execute(
+                """
+                insert into recommendation_searches (
+                  id, user_id, travel_window_id, home_city_id, radius_km, min_population,
+                  candidate_limit
+                )
+                values (%s, %s, %s, %s, %s, %s, %s)
+                on conflict (user_id, travel_window_id) do update set
+                  home_city_id = excluded.home_city_id,
+                  radius_km = excluded.radius_km,
+                  min_population = excluded.min_population,
+                  candidate_limit = excluded.candidate_limit,
+                  updated_at = now()
+                """,
+                [
+                    search_id,
+                    user_id,
+                    travel_window.id,
+                    home_city_id,
+                    radius_km,
+                    min_population,
+                    candidate_limit,
+                ],
+            )
+            cursor.execute("delete from recommendation_excluded_cities where search_id = %s", [search_id])
+            if should_replace_results:
+                cursor.execute("delete from recommendation_results where search_id = %s", [search_id])
+            for city_id in excluded_city_ids:
+                cursor.execute(
+                    """
+                    insert into recommendation_excluded_cities (search_id, city_id)
+                    values (%s, %s)
+                    on conflict do nothing
+                    """,
+                    [search_id, city_id],
+                )
+        connection.commit()
+    return search_id
+
+
+def get_recommendation_search(search_id: str) -> dict[str, Any] | None:
+    if not database.is_database_configured():
+        return None
+    return database.fetch_one(
+        """
+        select
+          s.id,
+          s.user_id,
+          s.travel_window_id,
+          s.home_city_id,
+          s.radius_km,
+          s.min_population,
+          s.candidate_limit,
+          w.label,
+          w.start_date,
+          w.end_date,
+          w.status,
+          coalesce(array_agg(e.city_id) filter (where e.city_id is not null), '{}') as excluded_city_ids
+        from recommendation_searches s
+        join travel_windows w on w.id = s.travel_window_id
+        left join recommendation_excluded_cities e on e.search_id = s.id
+        where s.id = %s
+        group by s.id, w.id
+        """,
+        [search_id],
+    )
+
+
+def store_recommendation_result(*, search_id: str, recommendation: Recommendation) -> None:
+    if not database.is_database_configured() or search_id.startswith("memory:"):
+        return
+    database.execute(
+        """
+        insert into recommendation_results (search_id, city_id, score, payload)
+        values (%s, %s, %s, %s::jsonb)
+        on conflict (search_id, city_id) do update set
+          score = excluded.score,
+          payload = excluded.payload,
+          updated_at = now()
+        """,
+        [
+            search_id,
+            recommendation.destination.id,
+            recommendation.score,
+            json.dumps(recommendation.model_dump(mode="json", by_alias=True), default=_json_default),
+        ],
+    )
+
+
+def get_saved_recommendation_results(search_id: str) -> list[Recommendation]:
+    if not database.is_database_configured() or search_id.startswith("memory:"):
+        return []
+    rows = database.fetch_all(
+        """
+        select payload
+        from recommendation_results
+        where search_id = %s
+        order by score desc
+        """,
+        [search_id],
+    )
+    return [Recommendation.model_validate(row["payload"]) for row in rows]

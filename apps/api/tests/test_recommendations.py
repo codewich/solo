@@ -4,7 +4,6 @@ from solo_api.models import (
     AirQualitySummary,
     AttractionSummary,
     ClimateSummary,
-    CostOfLivingSummary,
     RecommendationRequest,
     TravelWindow,
 )
@@ -51,7 +50,6 @@ def stub_live_signals(monkeypatch):
                 source="OpenAQ",
                 status="available",
             ),
-            "cost_of_living": CostOfLivingSummary(currency="", summary="Costs unavailable.", source="unavailable", status="unavailable"),
             "warnings": [],
         }
 
@@ -145,7 +143,6 @@ def test_recommendations_include_live_score_breakdown(monkeypatch):
                 source="OpenAQ",
                 status="available",
             ),
-            "cost_of_living": CostOfLivingSummary(currency="", summary="Costs unavailable.", source="unavailable", status="unavailable"),
             "warnings": [],
         }
 
@@ -166,7 +163,6 @@ def test_recommendations_include_live_score_breakdown(monkeypatch):
         first.score_breakdown.climate_score
         + first.score_breakdown.attraction_score
         + first.score_breakdown.popularity_score
-        + first.score_breakdown.affordability_score
     )
     assert first.attraction_count == 6
     assert first.top_attractions == []
@@ -289,9 +285,9 @@ def test_destination_signals_are_cached(monkeypatch):
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_month_climate_summary", fake_climate)
     monkeypatch.setattr("solo_api.recommendation_signals.get_climate_normal", lambda **kwargs: None)
     monkeypatch.setattr("solo_api.recommendation_signals.store_climate_normal", lambda **kwargs: None)
-    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: [])
-    monkeypatch.setattr("solo_api.recommendation_signals.store_attractions", lambda **kwargs: None)
-    monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", fake_attractions)
+    monkeypatch.setattr("solo_api.attraction_service.get_stored_attractions", lambda city_id: [])
+    monkeypatch.setattr("solo_api.attraction_service.store_attractions", lambda **kwargs: None)
+    monkeypatch.setattr("solo_api.recommendation_signals.resolve_city_attractions", fake_attractions)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", fake_summary)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", fake_image)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_air_quality_summary", fake_air_quality)
@@ -306,11 +302,10 @@ def test_destination_signals_are_cached(monkeypatch):
     assert calls == {"climate": 1, "attractions": 1, "summary": 1, "image": 1, "air_quality": 1}
 
 
-def test_destination_signals_write_to_shared_cache(monkeypatch):
+def test_destination_signals_do_not_write_search_scoped_shared_cache(monkeypatch):
     SIGNAL_CACHE._values.clear()
     writes = []
 
-    monkeypatch.setattr("solo_api.recommendation_signals.get_api_cache", lambda key: None, raising=False)
     monkeypatch.setattr(
         "solo_api.recommendation_signals.set_api_cache",
         lambda key, payload, ttl_seconds, provider: writes.append(
@@ -329,10 +324,10 @@ def test_destination_signals_write_to_shared_cache(monkeypatch):
     )
     monkeypatch.setattr("solo_api.recommendation_signals.get_climate_normal", lambda **kwargs: None)
     monkeypatch.setattr("solo_api.recommendation_signals.store_climate_normal", lambda **kwargs: None)
-    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: [])
-    monkeypatch.setattr("solo_api.recommendation_signals.store_attractions", lambda **kwargs: None)
+    monkeypatch.setattr("solo_api.attraction_service.get_stored_attractions", lambda city_id: [])
+    monkeypatch.setattr("solo_api.attraction_service.store_attractions", lambda **kwargs: None)
     monkeypatch.setattr(
-        "solo_api.recommendation_signals.fetch_attractions",
+        "solo_api.recommendation_signals.resolve_city_attractions",
         lambda **kwargs: [
             AttractionSummary(name=f"Attraction {index}", category="museum", source="OpenStreetMap")
             for index in range(8)
@@ -357,9 +352,7 @@ def test_destination_signals_write_to_shared_cache(monkeypatch):
         TravelWindow(id="may", start_date=date(2026, 5, 23), end_date=date(2026, 5, 25)),
     )
 
-    assert writes
-    assert writes[0][0].startswith("destination_signals:")
-    assert writes[0][3] == "destination_signals"
+    assert writes == []
 
 
 def test_destination_signals_reads_monthly_climate_from_storage(monkeypatch):
@@ -373,8 +366,6 @@ def test_destination_signals_reads_monthly_climate_from_storage(monkeypatch):
         summary="Stored monthly climate.",
     )
 
-    monkeypatch.setattr("solo_api.recommendation_signals.get_api_cache", lambda key: None)
-    monkeypatch.setattr("solo_api.recommendation_signals.set_api_cache", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "solo_api.recommendation_signals.get_climate_normal",
         lambda **kwargs: stored_climate,
@@ -383,9 +374,9 @@ def test_destination_signals_reads_monthly_climate_from_storage(monkeypatch):
         "solo_api.recommendation_signals.fetch_month_climate_summary",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("should not fetch climate")),
     )
-    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: [])
-    monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", lambda **kwargs: [])
-    monkeypatch.setattr("solo_api.recommendation_signals.store_attractions", lambda **kwargs: None)
+    monkeypatch.setattr("solo_api.attraction_service.get_stored_attractions", lambda city_id: [])
+    monkeypatch.setattr("solo_api.recommendation_signals.resolve_city_attractions", lambda **kwargs: [])
+    monkeypatch.setattr("solo_api.attraction_service.store_attractions", lambda **kwargs: None)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
     monkeypatch.setattr(
@@ -405,16 +396,13 @@ def test_destination_signals_reads_monthly_climate_from_storage(monkeypatch):
     assert signals.climate == stored_climate
 
 
-def test_destination_signals_store_fetched_attractions(monkeypatch):
+def test_destination_signals_use_resolved_city_attractions(monkeypatch):
     SIGNAL_CACHE._values.clear()
-    stored = []
     attractions = [
         AttractionSummary(name="Museum", category="museum", source="OpenStreetMap"),
         AttractionSummary(name="Viewpoint", category="viewpoint", source="OpenStreetMap"),
     ]
 
-    monkeypatch.setattr("solo_api.recommendation_signals.get_api_cache", lambda key: None)
-    monkeypatch.setattr("solo_api.recommendation_signals.set_api_cache", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "solo_api.recommendation_signals.get_climate_normal",
         lambda **kwargs: ClimateSummary(
@@ -424,12 +412,7 @@ def test_destination_signals_store_fetched_attractions(monkeypatch):
             summary="Stored climate.",
         ),
     )
-    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: [])
-    monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", lambda **kwargs: attractions)
-    monkeypatch.setattr(
-        "solo_api.recommendation_signals.store_attractions",
-        lambda **kwargs: stored.append(kwargs),
-    )
+    monkeypatch.setattr("solo_api.recommendation_signals.resolve_city_attractions", lambda **kwargs: attractions)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
     monkeypatch.setattr(
@@ -447,7 +430,6 @@ def test_destination_signals_store_fetched_attractions(monkeypatch):
     )
 
     assert signals.attraction_count == 2
-    assert stored == [{"city_id": "lisbon-pt", "attractions": attractions}]
 
 
 def test_destination_signals_read_stored_attractions(monkeypatch):
@@ -457,8 +439,6 @@ def test_destination_signals_read_stored_attractions(monkeypatch):
         AttractionSummary(name="Viewpoint", category="viewpoint", source="OpenStreetMap"),
     ]
 
-    monkeypatch.setattr("solo_api.recommendation_signals.get_api_cache", lambda key: None)
-    monkeypatch.setattr("solo_api.recommendation_signals.set_api_cache", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "solo_api.recommendation_signals.get_climate_normal",
         lambda **kwargs: ClimateSummary(
@@ -468,10 +448,9 @@ def test_destination_signals_read_stored_attractions(monkeypatch):
             summary="Stored climate.",
         ),
     )
-    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: attractions)
     monkeypatch.setattr(
-        "solo_api.recommendation_signals.fetch_attractions",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("should not fetch attractions")),
+        "solo_api.recommendation_signals.resolve_city_attractions",
+        lambda **kwargs: attractions,
     )
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
@@ -500,8 +479,8 @@ def test_destination_signals_fall_back_with_warning(monkeypatch):
 
     monkeypatch.setattr("solo_api.recommendation_signals.get_climate_normal", lambda **kwargs: None)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_month_climate_summary", broken_climate)
-    monkeypatch.setattr("solo_api.recommendation_signals.get_stored_attractions", lambda city_id: [])
-    monkeypatch.setattr("solo_api.recommendation_signals.fetch_attractions", lambda **kwargs: [])
+    monkeypatch.setattr("solo_api.attraction_service.get_stored_attractions", lambda city_id: [])
+    monkeypatch.setattr("solo_api.recommendation_signals.resolve_city_attractions", lambda **kwargs: [])
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_summary", lambda city: None)
     monkeypatch.setattr("solo_api.recommendation_signals.fetch_wikimedia_image", lambda city: None)
     monkeypatch.setattr(
@@ -546,7 +525,6 @@ def test_recommended_destinations_endpoint_returns_direct_search_shape(monkeypat
                 source="OpenAQ",
                 status="available",
             ),
-            "cost_of_living": CostOfLivingSummary(currency="", summary="Costs unavailable.", source="unavailable", status="unavailable"),
             "warnings": [],
         }
 
@@ -567,7 +545,6 @@ def test_recommended_destinations_endpoint_returns_direct_search_shape(monkeypat
         body[0].score_breakdown.climate_score
         + body[0].score_breakdown.attraction_score
         + body[0].score_breakdown.popularity_score
-        + body[0].score_breakdown.affordability_score
     )
     assert body[0].top_attractions == []
     assert body[0].attraction_count == 4
