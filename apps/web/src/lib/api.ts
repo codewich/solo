@@ -9,6 +9,7 @@ import type {
   RecommendationSearchCity,
   RecommendationSearchCreateRequest,
   RecommendationSearchCreateResponse,
+  TravelWindowDeleteRequest,
 } from "./types";
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:45655";
@@ -102,6 +103,21 @@ export async function createRecommendationSearch(
   }
 
   return response.json();
+}
+
+export async function deleteTravelWindow(
+  windowId: string,
+  request: TravelWindowDeleteRequest,
+): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/travel-windows/${encodeURIComponent(windowId)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    throw await responseError(response, `Travel window delete failed with ${response.status}`);
+  }
 }
 
 export async function fetchRecommendationSearchCities(

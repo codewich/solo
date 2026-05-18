@@ -564,6 +564,29 @@ def ensure_user(
     return user_id
 
 
+def get_user_id_for_auth(
+    *,
+    email: str,
+    provider: str = "google",
+    provider_subject: str | None = None,
+) -> str | None:
+    if not database.is_database_configured():
+        return "demo-user"
+
+    subject = provider_subject or email
+    row = database.fetch_one(
+        """
+        select u.id
+        from users u
+        join user_auth_accounts a on a.user_id = u.id
+        where a.provider = %s
+          and a.provider_subject = %s
+        """,
+        [provider, subject],
+    )
+    return str(row["id"]) if row else None
+
+
 def create_or_replace_recommendation_search(
     *,
     user_id: str,
@@ -584,7 +607,7 @@ def create_or_replace_recommendation_search(
                 """
                 insert into travel_windows (id, user_id, label, start_date, end_date, status)
                 values (%s, %s, %s, %s, %s, %s)
-                on conflict (id) do update set
+                on conflict (user_id, id) do update set
                   label = excluded.label,
                   start_date = excluded.start_date,
                   end_date = excluded.end_date,
@@ -666,6 +689,24 @@ def create_or_replace_recommendation_search(
     return search_id
 
 
+def delete_travel_window(*, user_id: str, travel_window_id: str) -> bool:
+    if not database.is_database_configured():
+        return True
+
+    with database.connect() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                delete from travel_windows
+                where user_id = %s and id = %s
+                """,
+                [user_id, travel_window_id],
+            )
+            deleted = cursor.rowcount > 0
+        connection.commit()
+    return deleted
+
+
 def get_recommendation_search(search_id: str) -> dict[str, Any] | None:
     if not database.is_database_configured():
         return None
@@ -699,18 +740,21 @@ def store_recommendation_result(*, search_id: str, recommendation: Recommendatio
         return
     database.execute(
         """
-        insert into recommendation_results (search_id, city_id, score, payload)
-        values (%s, %s, %s, %s::jsonb)
+        insert into recommendation_results (search_id, user_id, city_id, score, payload)
+        select id, user_id, %s, %s, %s::jsonb
+        from recommendation_searches
+        where id = %s
         on conflict (search_id, city_id) do update set
+          user_id = excluded.user_id,
           score = excluded.score,
           payload = excluded.payload,
           updated_at = now()
         """,
         [
-            search_id,
             recommendation.destination.id,
             recommendation.score,
             json.dumps(recommendation.model_dump(mode="json", by_alias=True), default=_json_default),
+            search_id,
         ],
     )
 

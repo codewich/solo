@@ -228,7 +228,7 @@ select:focus-visible {
   color: rgba(255, 255, 255, 0.82);
 }
 
-.recommendation-card.has-image [data-slot="badge"] {
+.recommendation-card.has-image [data-slot="badge"]:not(.air-good):not(.air-moderate):not(.air-poor):not(.air-unknown) {
   color: #ffffff;
   border-color: rgba(255, 255, 255, 0.24);
   background: rgba(255, 255, 255, 0.14);
@@ -773,6 +773,8 @@ select:focus-visible {
 }
 
 .air-unknown {
+  color: var(--text-muted);
+  background: var(--chip);
   border-color: var(--border-strong);
 }
 

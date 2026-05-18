@@ -3,6 +3,8 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { LocateFixed, RotateCcw, X } from "lucide-react";
+import { getSession } from "next-auth/react";
+import type { Session } from "next-auth";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +25,7 @@ import { DestinationMap } from "./destination-map";
 import {
   ApiRequestError,
   createRecommendationSearch,
+  deleteTravelWindow,
   fetchCitySuggestions,
   fetchNearestCity,
   fetchRecommendationSearchCities,
@@ -387,10 +390,12 @@ function DestinationCandidateCard({
 }
 
 export default function Page() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [isSessionLoaded, setIsSessionLoaded] = useState(false);
   const [homeLocation, setHomeLocation] = useState<SelectedCity>(defaultHomeCity);
   const [homeQuery, setHomeQuery] = useState(defaultHomeCity.city);
   const [homeSuggestions, setHomeSuggestions] = useState<CitySuggestion[]>([]);
-  const [travelWindows, setTravelWindows] = useState(initialTravelWindows);
+  const [travelWindows, setTravelWindows] = useState<PlanningWindow[]>([]);
   const [selectedTravelWindowId, setSelectedTravelWindowId] = useState<string | null>(null);
   const [visibleCalendarMonth, setVisibleCalendarMonth] = useState(() => new Date(2026, 4, 1));
   const [isAddingRange, setIsAddingRange] = useState(false);
@@ -410,6 +415,8 @@ export default function Page() {
   const [excludedSuggestions, setExcludedSuggestions] = useState<CitySuggestion[]>([]);
 
   const homeCity = homeLocation.city;
+  const isSignedIn = Boolean(session?.user);
+  const canManageTravelWindows = isSessionLoaded && isSignedIn;
   const selectedTravelWindow = selectedTravelWindowId
     ? travelWindows.find((window) => window.id === selectedTravelWindowId) ?? null
     : null;
@@ -469,6 +476,50 @@ export default function Page() {
       })),
     [readyRecommendations],
   );
+
+  useEffect(() => {
+    let isActive = true;
+
+    getSession()
+      .then((nextSession) => {
+        if (!isActive) {
+          return;
+        }
+        setSession(nextSession);
+        setIsSessionLoaded(true);
+        if (nextSession?.user) {
+          setTravelWindows((currentWindows) =>
+            currentWindows.length > 0 ? currentWindows : initialTravelWindows,
+          );
+        } else {
+          setTravelWindows([]);
+          setSelectedTravelWindowId(null);
+          setDraftRange(null);
+          setIsDraftComplete(false);
+          setIsAddingRange(false);
+          setCandidateCards([]);
+          setStatus("idle");
+        }
+      })
+      .catch(() => {
+        if (!isActive) {
+          return;
+        }
+        setSession(null);
+        setIsSessionLoaded(true);
+        setTravelWindows([]);
+        setSelectedTravelWindowId(null);
+        setDraftRange(null);
+        setIsDraftComplete(false);
+        setIsAddingRange(false);
+        setCandidateCards([]);
+        setStatus("idle");
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   useEffect(() => {
     setRangePageIndex((currentPage) => Math.min(currentPage, rangePageCount - 1));
@@ -592,6 +643,11 @@ export default function Page() {
   }
 
   async function handleFindDestinations() {
+    if (!canManageTravelWindows) {
+      showPersistentError("Sign in to save travel windows and find destinations.");
+      return;
+    }
+
     const isSavingDraftRange = draftRange !== null && isDraftComplete;
     const targetWindow = isSavingDraftRange
       ? planningWindowFromDraft(draftRange, travelWindows)
@@ -628,6 +684,9 @@ export default function Page() {
         min_population: minPopulation,
         candidate_limit: 10,
         excluded_city_ids: [homeLocation.id, ...excludedCities.map((city) => city.id)],
+        user_email: session?.user?.email ?? null,
+        user_name: session?.user?.name ?? null,
+        provider_subject: session?.user?.email ?? null,
       });
       setActiveSearchId(search.id);
 
@@ -685,7 +744,7 @@ export default function Page() {
   }
 
   function handleCalendarRangeSelect(range: DateRange | undefined) {
-    if (!isAddingRange || status === "loading") {
+    if (!canManageTravelWindows || !isAddingRange || status === "loading") {
       return;
     }
     if (!range?.from) {
@@ -700,7 +759,7 @@ export default function Page() {
   }
 
   function handleRangeButtonClick() {
-    if (status === "loading") {
+    if (!canManageTravelWindows || status === "loading") {
       return;
     }
     if (!isAddingRange) {
@@ -739,6 +798,32 @@ export default function Page() {
     );
     setEditingWindowId(null);
     setEditingLabel("");
+  }
+
+  async function handleRemoveTravelWindow(windowId: string) {
+    const userEmail = session?.user?.email;
+    if (!userEmail) {
+      showPersistentError("Sign in to remove saved travel windows.");
+      return;
+    }
+
+    const previousWindows = travelWindows;
+    setTravelWindows((currentWindows) => currentWindows.filter((item) => item.id !== windowId));
+    if (selectedTravelWindowId === windowId) {
+      setSelectedTravelWindowId(null);
+      setCandidateCards([]);
+      setActiveSearchId(null);
+    }
+
+    try {
+      await deleteTravelWindow(windowId, {
+        user_email: userEmail,
+        provider_subject: userEmail,
+      });
+    } catch (reason) {
+      setTravelWindows(previousWindows);
+      showPersistentError(errorMessage(reason, "Could not remove travel window."));
+    }
   }
 
   async function handleUseCurrentLocation() {
@@ -810,7 +895,6 @@ export default function Page() {
               <LocateFixed />
             </Button>
             <AuthButton />
-            <Button type="button">Save planner</Button>
           </div>
         </header>
 
@@ -834,7 +918,7 @@ export default function Page() {
                   onMonthChange={setVisibleCalendarMonth}
                   selected={visibleCalendarDateRange}
                   onSelect={handleCalendarRangeSelect}
-                  disabled={status === "loading"}
+                  disabled={!canManageTravelWindows || status === "loading"}
                   modifiers={{ holiday: holidayDates }}
                   holidayLabels={holidayLabels}
                   labels={{
@@ -862,131 +946,135 @@ export default function Page() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={status === "loading" || (isAddingRange && !isDraftComplete)}
+                    disabled={
+                      !canManageTravelWindows ||
+                      status === "loading" ||
+                      (isAddingRange && !isDraftComplete)
+                    }
                     onClick={handleRangeButtonClick}
                   >
                     {isAddingRange ? "Save draft range" : "Add range"}
                   </Button>
                   {isAddingRange ? (
-                    <Button variant="outline" size="sm" type="button" disabled={status === "loading"} onClick={handleCancelRange}>
+                    <Button variant="outline" size="sm" type="button" disabled={!canManageTravelWindows || status === "loading"} onClick={handleCancelRange}>
                       Cancel range
                     </Button>
                   ) : null}
                 </div>
               </CardHeader>
               <CardContent className="stack">
-                <Badge className="score-badge" variant="secondary">
-                  {travelWindows.length} ranges
-                </Badge>
-                <div className="range-list" aria-label="Candidate range list">
-                  {visibleTravelWindows.map((window) => {
-                    const isSelected = window.id === selectedTravelWindowId;
-                    return (
-                      <div className="range-item" key={window.id}>
-                        <Button
-                          aria-pressed={isSelected}
-                          className={cn(
-                            "range-button h-auto min-h-24 w-full shrink-0 justify-stretch whitespace-normal px-3 py-3 text-left",
-                            isSelected && "active",
-                          )}
-                          type="button"
-                          variant="outline"
-                          disabled={status === "loading"}
-                          aria-label={`Select ${window.label}`}
-                          onClick={() => {
-                            setSelectedTravelWindowId(window.id);
-                            showMonthForDate(window.start_date);
-                            setIsAddingRange(false);
-                            setDraftRange(null);
-                            setIsDraftComplete(false);
-                          }}
-                        >
-                          <span>
-                            <strong>{window.dates}</strong>
-                          </span>
-                          <span>
-                            <Pill>{window.status}</Pill>
-                          </span>
-                        </Button>
-                        {editingWindowId === window.id ? (
-                          <div className="range-editor">
-                            <div className="field-stack">
-                              <Label htmlFor={`range-label-${window.id}`}>Range label</Label>
-                              <Input
-                                id={`range-label-${window.id}`}
-                                value={editingLabel}
-                                onChange={(event) => setEditingLabel(event.target.value)}
-                              />
-                            </div>
-                            <Button variant="outline" size="sm" type="button" onClick={handleSaveRename}>
-                              Save range
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="range-actions">
+                {canManageTravelWindows ? (
+                  <>
+                    <Badge className="score-badge" variant="secondary">
+                      {travelWindows.length} ranges
+                    </Badge>
+                    <div className="range-list" aria-label="Candidate range list">
+                      {visibleTravelWindows.map((window) => {
+                        const isSelected = window.id === selectedTravelWindowId;
+                        return (
+                          <div className="range-item" key={window.id}>
                             <Button
+                              aria-pressed={isSelected}
+                              className={cn(
+                                "range-button h-auto min-h-24 w-full shrink-0 justify-stretch whitespace-normal px-3 py-3 text-left",
+                                isSelected && "active",
+                              )}
                               type="button"
                               variant="outline"
-                              size="sm"
                               disabled={status === "loading"}
-                              aria-label={`Rename ${window.label}`}
+                              aria-label={`Select ${window.label}`}
                               onClick={() => {
-                                setEditingWindowId(window.id);
-                                setEditingLabel(window.label);
+                                setSelectedTravelWindowId(window.id);
+                                showMonthForDate(window.start_date);
+                                setIsAddingRange(false);
+                                setDraftRange(null);
+                                setIsDraftComplete(false);
                               }}
                             >
-                              Rename
+                              <span>
+                                <strong>{window.dates}</strong>
+                              </span>
+                              <span>
+                                <Pill>{window.status}</Pill>
+                              </span>
                             </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={status === "loading"}
-                              aria-label={`Archive ${window.label}`}
-                              onClick={() =>
-                                setTravelWindows((currentWindows) =>
-                                  currentWindows.map((item) =>
-                                    item.id === window.id
-                                      ? {
-                                          ...item,
-                                          status: item.status === "archived" ? "candidate" : "archived",
-                                        }
-                                      : item,
-                                  ),
-                                )
-                              }
-                            >
-                              Archive
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="destructive"
-                              size="sm"
-                              disabled={status === "loading" || travelWindows.length === 1}
-                              aria-label={`Remove ${window.label}`}
-                              onClick={() => {
-                                const nextWindows = travelWindows.filter((item) => item.id !== window.id);
-                                setTravelWindows(nextWindows);
-                                if (selectedTravelWindowId === window.id) {
-                                  setSelectedTravelWindowId(null);
-                                }
-                              }}
-                            >
-                              Remove
-                            </Button>
+                            {editingWindowId === window.id ? (
+                              <div className="range-editor">
+                                <div className="field-stack">
+                                  <Label htmlFor={`range-label-${window.id}`}>Range label</Label>
+                                  <Input
+                                    id={`range-label-${window.id}`}
+                                    value={editingLabel}
+                                    onChange={(event) => setEditingLabel(event.target.value)}
+                                  />
+                                </div>
+                                <Button variant="outline" size="sm" type="button" onClick={handleSaveRename}>
+                                  Save range
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="range-actions">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={status === "loading"}
+                                  aria-label={`Rename ${window.label}`}
+                                  onClick={() => {
+                                    setEditingWindowId(window.id);
+                                    setEditingLabel(window.label);
+                                  }}
+                                >
+                                  Rename
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={status === "loading"}
+                                  aria-label={`Archive ${window.label}`}
+                                  onClick={() =>
+                                    setTravelWindows((currentWindows) =>
+                                      currentWindows.map((item) =>
+                                        item.id === window.id
+                                          ? {
+                                              ...item,
+                                              status: item.status === "archived" ? "candidate" : "archived",
+                                            }
+                                          : item,
+                                      ),
+                                    )
+                                  }
+                                >
+                                  Archive
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  disabled={status === "loading" || travelWindows.length === 1}
+                                  aria-label={`Remove ${window.label}`}
+                                  onClick={() => void handleRemoveTravelWindow(window.id)}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <p className="muted">Sign in to add and save travel windows.</p>
+                )}
                 {rangePageCount > 1 ? (
                   <div className="pagination-controls">
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled={status === "loading" || rangePageIndex === 0}
+                      disabled={!canManageTravelWindows || status === "loading" || rangePageIndex === 0}
                       onClick={() => setRangePageIndex((currentPage) => Math.max(0, currentPage - 1))}
                     >
                       Previous ranges
@@ -998,7 +1086,7 @@ export default function Page() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled={status === "loading" || rangePageIndex >= rangePageCount - 1}
+                      disabled={!canManageTravelWindows || status === "loading" || rangePageIndex >= rangePageCount - 1}
                       onClick={() =>
                         setRangePageIndex((currentPage) =>
                           Math.min(rangePageCount - 1, currentPage + 1),
@@ -1105,7 +1193,7 @@ export default function Page() {
                 </div>
                 <Button
                   type="button"
-                  disabled={!activeRange || status === "loading"}
+                  disabled={!canManageTravelWindows || !activeRange || status === "loading"}
                   onClick={handleFindDestinations}
                 >
                   {status === "loading" ? (

@@ -2,6 +2,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Toaster } from "@/components/ui/sonner";
 import Page from "./page";
 
+const getSessionMock = vi.hoisted(() => vi.fn());
+
+vi.mock("next-auth/react", () => ({
+  getSession: getSessionMock,
+}));
+
 vi.mock("@/components/auth-button", () => ({
   AuthButton: () => <button type="button">Sign in with Google</button>,
 }));
@@ -99,6 +105,9 @@ function installSearchFetch(overrides?: {
     if (path.endsWith("/recommendation-searches")) {
       return overrides?.create?.() ?? ok({ id: "search-1", travel_window_id: "may", status: "created" });
     }
+    if (path.includes("/travel-windows/")) {
+      return ok({});
+    }
     if (path.endsWith("/recommendation-searches/search-1/recommendations")) {
       return overrides?.saved?.() ?? ok([]);
     }
@@ -150,10 +159,25 @@ function fail(status: number, message: string): ResponseLike {
   };
 }
 
+async function selectSpringWindow() {
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: /Select Spring bank holiday/ })).toBeInTheDocument();
+  });
+  fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+}
+
 describe("Solo homepage", () => {
+  beforeEach(() => {
+    getSessionMock.mockResolvedValue({
+      expires: "2026-12-31T00:00:00.000Z",
+      user: { email: "solo@example.com", name: "Solo User" },
+    });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    getSessionMock.mockReset();
   });
 
   it("renders the map workflow with home city controls in the top bar", async () => {
@@ -169,7 +193,45 @@ describe("Solo homepage", () => {
     expect(screen.getByLabelText("Europe destination map")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Find destinations" })).toBeDisabled();
     await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Select Spring bank holiday/ })).toBeInTheDocument();
+    });
+    await waitFor(() => {
       expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
+    });
+  });
+
+  it("does not show date ranges when the user is signed out", async () => {
+    getSessionMock.mockResolvedValueOnce(null);
+    installSearchFetch();
+
+    render(<Page />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Sign in to add and save travel windows.")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /Select Spring bank holiday/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Find destinations" })).toBeDisabled();
+  });
+
+  it("deletes a date range from the API before removing it from the saved range list", async () => {
+    const fetchMock = installSearchFetch();
+    render(<Page />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Remove Spring bank holiday/ })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Remove Spring bank holiday/ }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /Select Spring bank holiday/ })).not.toBeInTheDocument();
+    });
+    const deleteCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).endsWith("/travel-windows/may") && init?.method === "DELETE",
+    );
+    expect(deleteCall).toBeDefined();
+    expect(JSON.parse(String(deleteCall?.[1]?.body))).toEqual({
+      user_email: "solo@example.com",
+      provider_subject: "solo@example.com",
     });
   });
 
@@ -189,7 +251,7 @@ describe("Solo homepage", () => {
     });
     render(<Page />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    await selectSpringWindow();
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
@@ -209,7 +271,7 @@ describe("Solo homepage", () => {
     expect(screen.getByText("17-28C")).toBeInTheDocument();
     expect(screen.getByText("4 mm rain")).toBeInTheDocument();
     expect(screen.getByText("3 h sun")).toBeInTheDocument();
-    expect(screen.getByText("Good air")).toBeInTheDocument();
+    expect(screen.getByText("Good air")).toHaveClass("air-good");
     expect(screen.getByText("Belem Tower")).toBeInTheDocument();
     expect(screen.queryByText(/hotel/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/affordability/i)).not.toBeInTheDocument();
@@ -225,7 +287,7 @@ describe("Solo homepage", () => {
     fireEvent.change(screen.getByLabelText("Minimum population"), {
       target: { value: "500000" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    await selectSpringWindow();
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
@@ -242,6 +304,9 @@ describe("Solo homepage", () => {
         min_population: 500000,
         candidate_limit: 10,
         excluded_city_ids: ["2643743"],
+        user_email: "solo@example.com",
+        user_name: "Solo User",
+        provider_subject: "solo@example.com",
       }),
     );
   });
@@ -260,7 +325,7 @@ describe("Solo homepage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Madrid, Spain" }));
 
     expect(screen.getByLabelText("Excluded cities")).toHaveTextContent("Madrid, Spain");
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    await selectSpringWindow();
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
@@ -300,7 +365,7 @@ describe("Solo homepage", () => {
     });
     render(<Page />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    await selectSpringWindow();
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
@@ -327,7 +392,7 @@ describe("Solo homepage", () => {
       </>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    await selectSpringWindow();
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
@@ -343,7 +408,7 @@ describe("Solo homepage", () => {
 
     render(<Page />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    await selectSpringWindow();
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
@@ -366,7 +431,7 @@ describe("Solo homepage", () => {
 
     render(<Page />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    await selectSpringWindow();
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
@@ -388,7 +453,7 @@ describe("Solo homepage", () => {
     installSearchFetch({ cities: () => citiesResponse });
     render(<Page />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Select Spring bank holiday/ }));
+    await selectSpringWindow();
     fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
 
     await waitFor(() => {
@@ -396,5 +461,9 @@ describe("Solo homepage", () => {
     });
 
     resolveCities(ok([]));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Find destinations/ })).toBeEnabled();
+    });
   });
 });

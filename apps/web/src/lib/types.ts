@@ -152,6 +152,11 @@ export type RecommendationSearchCreateRequest = {
   provider_subject?: string | null;
 };
 
+export type TravelWindowDeleteRequest = {
+  user_email: string;
+  provider_subject?: string | null;
+};
+
 export type RecommendationSearchCreateResponse = {
   id: string;
   travel_window_id: string;

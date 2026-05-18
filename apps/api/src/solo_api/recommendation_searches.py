@@ -13,14 +13,17 @@ from solo_api.models import (
     RecommendationSearchCreateRequest,
     RecommendationSearchCreateResponse,
     TravelWindow,
+    TravelWindowDeleteRequest,
 )
 from solo_api.recommendations import DEFAULT_CENTER_LATITUDE, DEFAULT_CENTER_LONGITUDE, _recommendation_for
 from solo_api.storage import (
     create_or_replace_recommendation_search,
+    delete_travel_window,
     ensure_user,
     get_city,
     get_recommendation_search,
     get_saved_recommendation_results,
+    get_user_id_for_auth,
     store_recommendation_result,
 )
 from solo_api.destination_intelligence import build_destination_intelligence
@@ -160,6 +163,17 @@ def load_recommendation_search_city_intelligence(
 
 def saved_recommendation_search_results(search_id: str) -> list[Recommendation]:
     return get_saved_recommendation_results(search_id)
+
+
+def remove_travel_window(window_id: str, request: TravelWindowDeleteRequest) -> None:
+    user_id = get_user_id_for_auth(
+        email=request.user_email,
+        provider_subject=request.provider_subject,
+    )
+    if user_id is None:
+        raise ValueError("Signed-in user was not found.")
+    if not delete_travel_window(user_id=user_id, travel_window_id=window_id):
+        raise ValueError("Travel window was not found.")
 
 
 def _request_like(search: MemorySearch) -> Any:

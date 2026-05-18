@@ -186,6 +186,11 @@ class RecommendationSearchCreateRequest(BaseModel):
     provider_subject: str | None = None
 
 
+class TravelWindowDeleteRequest(BaseModel):
+    user_email: str
+    provider_subject: str | None = None
+
+
 class RecommendationSearchCreateResponse(BaseModel):
     id: str
     travel_window_id: str

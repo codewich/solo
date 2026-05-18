@@ -23,11 +23,13 @@ from solo_api.models import (
     RecommendationSearchCity,
     RecommendationSearchCreateRequest,
     RecommendationSearchCreateResponse,
+    TravelWindowDeleteRequest,
 )
 from solo_api.recommendation_searches import (
     create_recommendation_search,
     list_recommendation_search_cities,
     load_recommendation_search_city_intelligence,
+    remove_travel_window,
     saved_recommendation_search_results,
     score_recommendation_search_city,
 )
@@ -96,6 +98,14 @@ def recommendation_searches(
         return create_recommendation_search(request)
     except ValueError as error:
         raise HTTPException(status_code=400, detail={"message": str(error)}) from error
+
+
+@app.delete("/travel-windows/{window_id}", status_code=204)
+def delete_saved_travel_window(window_id: str, request: TravelWindowDeleteRequest) -> None:
+    try:
+        remove_travel_window(window_id, request)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail={"message": str(error)}) from error
 
 
 @app.get("/recommendation-searches/{search_id}/cities")

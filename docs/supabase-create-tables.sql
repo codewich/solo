@@ -191,10 +191,16 @@ create table if not exists public.travel_windows (
   updated_at timestamptz not null default now()
 );
 
+alter table if exists public.recommendation_searches
+  drop constraint if exists recommendation_searches_travel_window_id_fkey;
+
+alter table if exists public.travel_windows
+  drop constraint if exists travel_windows_pkey;
+
 create table if not exists public.recommendation_searches (
   id uuid primary key default extensions.gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
-  travel_window_id text not null references public.travel_windows(id) on delete cascade,
+  travel_window_id text not null,
   home_city_id text not null references public.cities(id),
   radius_km integer not null,
   min_population integer not null,
@@ -204,6 +210,35 @@ create table if not exists public.recommendation_searches (
   unique (user_id, travel_window_id)
 );
 
+insert into public.travel_windows (id, user_id, label, start_date, end_date, status, created_at, updated_at)
+select
+  search.travel_window_id,
+  search.user_id,
+  travel_window.label,
+  travel_window.start_date,
+  travel_window.end_date,
+  travel_window.status,
+  now(),
+  now()
+from public.recommendation_searches search
+join public.travel_windows travel_window on travel_window.id = search.travel_window_id
+left join public.travel_windows owned_window
+  on owned_window.id = search.travel_window_id
+  and owned_window.user_id = search.user_id
+where owned_window.id is null;
+
+alter table if exists public.travel_windows
+  add constraint travel_windows_pkey primary key (user_id, id);
+
+alter table if exists public.recommendation_searches
+  add constraint recommendation_searches_user_travel_window_fkey
+  foreign key (user_id, travel_window_id)
+  references public.travel_windows(user_id, id)
+  on delete cascade;
+
+alter table if exists public.recommendation_searches
+  add constraint recommendation_searches_id_user_id_key unique (id, user_id);
+
 create table if not exists public.recommendation_excluded_cities (
   search_id uuid not null references public.recommendation_searches(id) on delete cascade,
   city_id text not null references public.cities(id) on delete cascade,
@@ -212,13 +247,20 @@ create table if not exists public.recommendation_excluded_cities (
 
 create table if not exists public.recommendation_results (
   search_id uuid not null references public.recommendation_searches(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
   city_id text not null references public.cities(id) on delete cascade,
   score integer not null,
   payload jsonb not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  primary key (search_id, city_id)
+  primary key (search_id, city_id),
+  foreign key (search_id, user_id)
+    references public.recommendation_searches(id, user_id)
+    on delete cascade
 );
 
 create index if not exists recommendation_results_score_idx
   on public.recommendation_results (search_id, score desc);
+
+create index if not exists recommendation_results_user_score_idx
+  on public.recommendation_results (user_id, score desc);
