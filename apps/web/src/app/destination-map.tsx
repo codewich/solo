@@ -469,19 +469,6 @@ export function DestinationMap({
             {searchBounds ? "Rectangle area" : "Draw rectangle"}
           </div>
         )}
-        {showDestinationPins
-          ? visibleDestinations.map((destination) => (
-              <div
-                className="map-chip"
-                key={destination.city}
-                aria-label={`${destination.city} city marker`}
-              >
-                {destination.city}
-                {destination.score !== undefined ? ` ${destination.score}` : null}
-                {destination.summary ? <span>{destination.summary}</span> : null}
-              </div>
-            ))
-          : null}
       </div>
     </section>
   );
