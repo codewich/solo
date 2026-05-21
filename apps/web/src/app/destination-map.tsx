@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { SearchBounds, SearchMode } from "@/lib/types";
 
 type MapDestination = {
   city: string;
   country: string;
-  score: number;
-  summary: string;
+  score?: number;
+  summary?: string;
   coordinates?: [number, number];
 };
 
@@ -16,6 +17,11 @@ type DestinationMapProps = {
   homeCity: string;
   homeCoordinates: [number, number];
   radiusKm: number;
+  searchMode: SearchMode;
+  searchBounds: SearchBounds | null;
+  isDrawingRectangle: boolean;
+  onSearchBoundsChange: (bounds: SearchBounds | null) => void;
+  onDrawingRectangleChange: (isDrawing: boolean) => void;
   showDestinationPins: boolean;
 };
 
@@ -60,6 +66,18 @@ export function mapViewForHome(homeCoordinates: [number, number], radiusKm: numb
   };
 }
 
+export function mapViewForBounds(bounds: SearchBounds) {
+  const longitudeSpan = Math.abs(bounds.east - bounds.west);
+  const latitudeSpan = Math.abs(bounds.north - bounds.south);
+  const span = Math.max(longitudeSpan, latitudeSpan);
+  const zoom = span <= 5 ? 6 : span <= 15 ? 5 : span <= 30 ? 4 : 3;
+
+  return {
+    center: [Number(((bounds.west + bounds.east) / 2).toFixed(6)), Number(((bounds.south + bounds.north) / 2).toFixed(6))] as [number, number],
+    zoom,
+  };
+}
+
 function createCityMarkerElement(city: string, variant: "home" | "destination"): HTMLDivElement {
   const marker = document.createElement("div");
   marker.className = `city-marker city-marker-${variant}`;
@@ -101,11 +119,63 @@ function circleFeature(center: [number, number], radiusKm: number) {
   };
 }
 
+function rectangleFeature(bounds: SearchBounds) {
+  const coordinates = [
+    [bounds.west, bounds.south],
+    [bounds.east, bounds.south],
+    [bounds.east, bounds.north],
+    [bounds.west, bounds.north],
+    [bounds.west, bounds.south],
+  ];
+
+  return {
+    type: "Feature" as const,
+    properties: {},
+    geometry: {
+      type: "Polygon" as const,
+      coordinates: [coordinates],
+    },
+  };
+}
+
+function removeLayerIfExists(map: import("maplibre-gl").Map, layerId: string) {
+  if (map.getLayer(layerId)) {
+    map.removeLayer(layerId);
+  }
+}
+
+function removeSourceIfExists(map: import("maplibre-gl").Map, sourceId: string) {
+  if (map.getSource(sourceId)) {
+    map.removeSource(sourceId);
+  }
+}
+
+function normalizedBounds(
+  start: { lng: number; lat: number },
+  end: { lng: number; lat: number },
+): SearchBounds | null {
+  const west = Math.max(-180, Math.min(start.lng, end.lng));
+  const east = Math.min(180, Math.max(start.lng, end.lng));
+  const south = Math.max(-90, Math.min(start.lat, end.lat));
+  const north = Math.min(90, Math.max(start.lat, end.lat));
+
+  if (west === east || south === north) {
+    return null;
+  }
+
+  return { west, south, east, north };
+}
+
 export function DestinationMap({
   destinations,
   homeCity,
   homeCoordinates,
   radiusKm,
+  searchMode,
+  searchBounds,
+  isDrawingRectangle,
+  onSearchBoundsChange,
+  onDrawingRectangleChange,
   showDestinationPins,
 }: DestinationMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -185,8 +255,12 @@ export function DestinationMap({
     if (!map || !isMapReady) {
       return;
     }
+    if (searchMode === "rectangle" && searchBounds) {
+      map.jumpTo(mapViewForBounds(searchBounds));
+      return;
+    }
     map.jumpTo(mapViewForHome(currentHomeCoordinates, radiusKm));
-  }, [currentHomeCoordinates, isMapReady, radiusKm]);
+  }, [currentHomeCoordinates, isMapReady, radiusKm, searchBounds, searchMode]);
 
   useEffect(() => {
     let isMounted = true;
@@ -213,7 +287,10 @@ export function DestinationMap({
         .addTo(map);
       markerRefs.current.push(homeMarker);
 
-      if (!map.getSource("search-radius")) {
+      if (searchMode === "radius" && !map.getSource("search-radius")) {
+        removeLayerIfExists(map, "search-rectangle-fill");
+        removeLayerIfExists(map, "search-rectangle-line");
+        removeSourceIfExists(map, "search-rectangle");
         map.addSource("search-radius", {
           type: "geojson",
           data: circleFeature(currentHomeCoordinates, radiusKm),
@@ -237,11 +314,49 @@ export function DestinationMap({
             "line-width": 2,
           },
         });
-      } else {
+      } else if (searchMode === "radius") {
         const source = map.getSource("search-radius") as
           | { setData: (data: ReturnType<typeof circleFeature>) => void }
           | undefined;
         source?.setData(circleFeature(currentHomeCoordinates, radiusKm));
+      } else {
+        removeLayerIfExists(map, "search-radius-fill");
+        removeLayerIfExists(map, "search-radius-line");
+        removeSourceIfExists(map, "search-radius");
+        if (searchBounds && !map.getSource("search-rectangle")) {
+          map.addSource("search-rectangle", {
+            type: "geojson",
+            data: rectangleFeature(searchBounds),
+          });
+          map.addLayer({
+            id: "search-rectangle-fill",
+            type: "fill",
+            source: "search-rectangle",
+            paint: {
+              "fill-color": "#24745a",
+              "fill-opacity": 0.12,
+            },
+          });
+          map.addLayer({
+            id: "search-rectangle-line",
+            type: "line",
+            source: "search-rectangle",
+            paint: {
+              "line-color": "#24745a",
+              "line-opacity": 0.62,
+              "line-width": 2,
+            },
+          });
+        } else if (searchBounds) {
+          const source = map.getSource("search-rectangle") as
+            | { setData: (data: ReturnType<typeof rectangleFeature>) => void }
+            | undefined;
+          source?.setData(rectangleFeature(searchBounds));
+        } else {
+          removeLayerIfExists(map, "search-rectangle-fill");
+          removeLayerIfExists(map, "search-rectangle-line");
+          removeSourceIfExists(map, "search-rectangle");
+        }
       }
 
       if (showDestinationPins) {
@@ -252,7 +367,9 @@ export function DestinationMap({
             .setLngLat(destination.coordinates)
             .setPopup(
               new maplibregl.Popup({ offset: 18 }).setText(
-                `${destination.city}, ${destination.country}: ${destination.score}. ${destination.summary}`,
+                `${destination.city}, ${destination.country}${
+                  destination.score !== undefined ? `: ${destination.score}` : ""
+                }. ${destination.summary ?? ""}`.trim(),
               ),
             )
             .addTo(map);
@@ -266,16 +383,92 @@ export function DestinationMap({
     return () => {
       isMounted = false;
     };
-  }, [homeCity, currentHomeCoordinates, isMapReady, radiusKm, showDestinationPins, visibleDestinations]);
+  }, [
+    homeCity,
+    currentHomeCoordinates,
+    isMapReady,
+    radiusKm,
+    searchBounds,
+    searchMode,
+    showDestinationPins,
+    visibleDestinations,
+  ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isMapReady || searchMode !== "rectangle" || !isDrawingRectangle) {
+      map?.dragPan.enable();
+      return;
+    }
+
+    const activeMap = map;
+    let startPoint: { lng: number; lat: number } | null = null;
+
+    function finishDrawing() {
+      activeMap.dragPan.enable();
+      onDrawingRectangleChange(false);
+    }
+
+    function handleMouseDown(event: import("maplibre-gl").MapMouseEvent) {
+      startPoint = event.lngLat;
+      activeMap.dragPan.disable();
+    }
+
+    function handleMouseMove(event: import("maplibre-gl").MapMouseEvent) {
+      if (!startPoint) {
+        return;
+      }
+      const nextBounds = normalizedBounds(startPoint, event.lngLat);
+      if (nextBounds) {
+        onSearchBoundsChange(nextBounds);
+      }
+    }
+
+    function handleMouseUp(event: import("maplibre-gl").MapMouseEvent) {
+      if (startPoint) {
+        const nextBounds = normalizedBounds(startPoint, event.lngLat);
+        if (nextBounds) {
+          onSearchBoundsChange(nextBounds);
+        }
+      }
+      startPoint = null;
+      finishDrawing();
+    }
+
+    activeMap.getCanvas().style.cursor = "crosshair";
+    activeMap.on("mousedown", handleMouseDown);
+    activeMap.on("mousemove", handleMouseMove);
+    activeMap.on("mouseup", handleMouseUp);
+
+    return () => {
+      activeMap.getCanvas().style.cursor = "";
+      activeMap.off("mousedown", handleMouseDown);
+      activeMap.off("mousemove", handleMouseMove);
+      activeMap.off("mouseup", handleMouseUp);
+      activeMap.dragPan.enable();
+    };
+  }, [
+    isDrawingRectangle,
+    isMapReady,
+    onDrawingRectangleChange,
+    onSearchBoundsChange,
+    searchMode,
+  ]);
 
   return (
     <section className="map real-map" aria-label="Europe destination map">
       <div className="map-canvas" data-testid="maplibre-map" ref={containerRef} />
       <div className="map-overlay-pins" aria-label="Visible destination markers">
         <div className="map-chip map-chip-home">{homeCity} home base</div>
-        <div className="map-chip map-chip-radius" aria-label={`Search radius ${radiusKm} km`}>
-          {radiusKm} km radius
-        </div>
+        {searchMode === "radius" ? (
+          <div className="map-chip map-chip-radius" aria-label={`Search radius ${radiusKm} km`}>
+            {radiusKm} km radius
+          </div>
+        ) : (
+          <div className="map-chip map-chip-radius" aria-label="Rectangle search area">
+            {searchBounds ? "Rectangle area" : "Draw rectangle"}
+          </div>
+        )}
         {showDestinationPins
           ? visibleDestinations.map((destination) => (
               <div
@@ -283,8 +476,9 @@ export function DestinationMap({
                 key={destination.city}
                 aria-label={`${destination.city} city marker`}
               >
-                {destination.city} {destination.score}
-                <span>{destination.summary}</span>
+                {destination.city}
+                {destination.score !== undefined ? ` ${destination.score}` : null}
+                {destination.summary ? <span>{destination.summary}</span> : null}
               </div>
             ))
           : null}

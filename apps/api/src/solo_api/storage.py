@@ -19,6 +19,8 @@ from solo_api.models import (
     PublicHoliday,
     Recommendation,
     RecommendationScoreBreakdown,
+    SearchBounds,
+    SearchMode,
     TravelWindow,
 )
 
@@ -166,6 +168,58 @@ def find_city_candidates(
             longitude,
             latitude,
             radius_km * 1000,
+            limit,
+        ],
+    )
+    return [Destination.model_validate(row) for row in rows]
+
+
+def find_city_candidates_in_bounds(
+    *,
+    west: float,
+    south: float,
+    east: float,
+    north: float,
+    min_population: int,
+    limit: int,
+    region: str | None,
+    query: str | None,
+) -> list[Destination]:
+    if not database.is_database_configured():
+        return []
+
+    rows = database.fetch_all(
+        """
+        select
+          id,
+          name as city,
+          country_name as country,
+          timezone,
+          latitude,
+          longitude,
+          population,
+          region,
+          country_code
+        from cities
+        where population >= %s
+          and longitude between %s and %s
+          and latitude between %s and %s
+          and (%s::text is null or country_code = upper(%s::text) or region ilike %s::text)
+          and (%s::text is null or name ilike %s::text)
+        order by population desc nulls last
+        limit %s
+        """,
+        [
+            min_population,
+            west,
+            east,
+            south,
+            north,
+            region,
+            region,
+            f"%{region}%" if region else None,
+            query,
+            f"{query}%" if query else None,
             limit,
         ],
     )
@@ -862,6 +916,8 @@ def create_or_replace_recommendation_search(
     travel_window: TravelWindow,
     home_city_id: str,
     radius_km: int,
+    search_mode: SearchMode,
+    search_bounds: SearchBounds | None,
     min_population: int,
     candidate_limit: int,
     excluded_city_ids: list[str],
@@ -870,6 +926,8 @@ def create_or_replace_recommendation_search(
         return f"memory:{user_id}:{travel_window.id}"
 
     search_id = str(uuid4())
+    normalized_search_bounds = search_bounds.model_dump() if search_mode == "rectangle" and search_bounds else None
+    serialized_search_bounds = json.dumps(normalized_search_bounds) if normalized_search_bounds else None
     with database.connect() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -894,7 +952,7 @@ def create_or_replace_recommendation_search(
             )
             existing = cursor.execute(
                 """
-                select id, home_city_id, radius_km, min_population, candidate_limit
+                select id, home_city_id, radius_km, search_mode, search_bounds, min_population, candidate_limit
                 from recommendation_searches
                 where user_id = %s and travel_window_id = %s
                 """,
@@ -914,6 +972,8 @@ def create_or_replace_recommendation_search(
                 should_replace_results = (
                     existing["home_city_id"] != home_city_id
                     or existing["radius_km"] != radius_km
+                    or existing.get("search_mode", "radius") != search_mode
+                    or existing.get("search_bounds") != normalized_search_bounds
                     or existing["min_population"] != min_population
                     or existing["candidate_limit"] != candidate_limit
                     or {row["city_id"] for row in existing_exclusions} != set(excluded_city_ids)
@@ -921,13 +981,16 @@ def create_or_replace_recommendation_search(
             cursor.execute(
                 """
                 insert into recommendation_searches (
-                  id, user_id, travel_window_id, home_city_id, radius_km, min_population,
+                  id, user_id, travel_window_id, home_city_id, radius_km, search_mode,
+                  search_bounds, min_population,
                   candidate_limit
                 )
-                values (%s, %s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
                 on conflict (user_id, travel_window_id) do update set
                   home_city_id = excluded.home_city_id,
                   radius_km = excluded.radius_km,
+                  search_mode = excluded.search_mode,
+                  search_bounds = excluded.search_bounds,
                   min_population = excluded.min_population,
                   candidate_limit = excluded.candidate_limit,
                   updated_at = now()
@@ -938,6 +1001,8 @@ def create_or_replace_recommendation_search(
                     travel_window.id,
                     home_city_id,
                     radius_km,
+                    search_mode,
+                    serialized_search_bounds,
                     min_population,
                     candidate_limit,
                 ],
@@ -982,10 +1047,62 @@ def list_travel_windows(*, user_id: str) -> list[TravelWindow]:
 
     rows = database.fetch_all(
         """
-        select id, label, start_date, end_date, status
-        from travel_windows
-        where user_id = %s
-        order by start_date asc, created_at asc
+        select
+          w.id,
+          w.label,
+          w.start_date,
+          w.end_date,
+          w.status,
+          s.id as latest_search_id,
+          s.home_city_id,
+          c.name as home_city_name,
+          c.country_name as home_city_country,
+          c.timezone as home_city_timezone,
+          c.latitude as home_city_latitude,
+          c.longitude as home_city_longitude,
+          c.population as home_city_population,
+          c.region as home_city_region,
+          c.country_code as home_city_country_code,
+          s.radius_km,
+          s.search_mode,
+          s.search_bounds,
+          s.min_population,
+          s.candidate_limit,
+          count(r.city_id)::int as result_count
+        from travel_windows w
+        left join recommendation_searches s
+          on s.user_id = w.user_id
+          and s.travel_window_id = w.id
+        left join recommendation_results r
+          on r.search_id = s.id
+        left join cities c
+          on c.id = s.home_city_id
+        where w.user_id = %s
+        group by
+          w.id,
+          w.user_id,
+          w.label,
+          w.start_date,
+          w.end_date,
+          w.status,
+          w.created_at,
+          s.id,
+          s.home_city_id,
+          s.radius_km,
+          s.search_mode,
+          s.search_bounds,
+          s.min_population,
+          s.candidate_limit,
+          c.id,
+          c.name,
+          c.country_name,
+          c.timezone,
+          c.latitude,
+          c.longitude,
+          c.population,
+          c.region,
+          c.country_code
+        order by w.start_date asc, w.created_at asc
         """,
         [user_id],
     )
@@ -996,6 +1113,35 @@ def list_travel_windows(*, user_id: str) -> list[TravelWindow]:
             start_date=row["start_date"],
             end_date=row["end_date"],
             status=row["status"],
+            latest_search=(
+                {
+                    "id": str(row["latest_search_id"]),
+                    "home_city_id": row["home_city_id"],
+                    "home_city": (
+                        {
+                            "id": row["home_city_id"],
+                            "city": row["home_city_name"],
+                            "country": row["home_city_country"],
+                            "timezone": row["home_city_timezone"],
+                            "latitude": row["home_city_latitude"],
+                            "longitude": row["home_city_longitude"],
+                            "population": row["home_city_population"],
+                            "region": row["home_city_region"],
+                            "country_code": row["home_city_country_code"],
+                        }
+                        if row.get("home_city_name")
+                        else None
+                    ),
+                    "radius_km": row["radius_km"],
+                    "search_mode": row.get("search_mode") or "radius",
+                    "search_bounds": row.get("search_bounds"),
+                    "min_population": row["min_population"],
+                    "candidate_limit": row["candidate_limit"],
+                    "result_count": row["result_count"],
+                }
+                if row.get("latest_search_id")
+                else None
+            ),
         )
         for row in rows
     ]
@@ -1012,6 +1158,8 @@ def get_recommendation_search(search_id: str) -> dict[str, Any] | None:
           s.travel_window_id,
           s.home_city_id,
           s.radius_km,
+          s.search_mode,
+          s.search_bounds,
           s.min_population,
           s.candidate_limit,
           w.label,
@@ -1023,7 +1171,20 @@ def get_recommendation_search(search_id: str) -> dict[str, Any] | None:
         join travel_windows w on w.id = s.travel_window_id
         left join recommendation_excluded_cities e on e.search_id = s.id
         where s.id = %s
-        group by s.id, w.id
+        group by
+          s.id,
+          s.user_id,
+          s.travel_window_id,
+          s.home_city_id,
+          s.radius_km,
+          s.search_mode,
+          s.search_bounds,
+          s.min_population,
+          s.candidate_limit,
+          w.label,
+          w.start_date,
+          w.end_date,
+          w.status
         """,
         [search_id],
     )

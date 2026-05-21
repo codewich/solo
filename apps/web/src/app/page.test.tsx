@@ -124,8 +124,11 @@ function installSearchFetch(overrides?: {
     if (path.includes("/holidays?")) {
       return ok([{ date: "2026-05-25", name: "Spring bank holiday", country_code: "GB", region_code: "gb-eng" }]);
     }
-    if (path.endsWith("/recommendation-searches/search-1/recommendations")) {
+  if (path.endsWith("/recommendation-searches/search-1/recommendations")) {
       return overrides?.saved?.() ?? ok([]);
+    }
+    if (path.endsWith("/recommendation-searches/saved-search/recommendations")) {
+      return overrides?.saved?.() ?? ok([recommendation(lisbon, 91), recommendation(porto, 86)]);
     }
     if (path.endsWith("/recommendation-searches/search-1/cities")) {
       return (
@@ -141,6 +144,10 @@ function installSearchFetch(overrides?: {
       return overrides?.score?.(cityId) ?? ok(recommendation(cityId === porto.id ? porto : lisbon, cityId === porto.id ? 86 : 91));
     }
     if (path.includes("/recommendation-searches/search-1/cities/") && path.endsWith("/intelligence")) {
+      const cityId = path.split("/cities/")[1].split("/")[0];
+      return overrides?.details?.(cityId) ?? ok(intelligence(cityId === porto.id ? porto : lisbon));
+    }
+    if (path.includes("/recommendation-searches/saved-search/cities/") && path.endsWith("/intelligence")) {
       const cityId = path.split("/cities/")[1].split("/")[0];
       return overrides?.details?.(cityId) ?? ok(intelligence(cityId === porto.id ? porto : lisbon));
     }
@@ -294,6 +301,123 @@ describe("Solo homepage", () => {
     ).toBe(true);
   });
 
+  it("loads saved recommendations and hydrates intelligence when selecting a saved range", async () => {
+    const fetchMock = installSearchFetch({
+      travelWindows: async () =>
+        ok([
+          {
+            id: "range-saved",
+            label: "Saved Paris weekend",
+            start_date: "2026-05-22",
+            end_date: "2026-05-25",
+            status: "candidate",
+            latest_search: {
+              id: "saved-search",
+              home_city_id: "3117735",
+              home_city: {
+                id: "3117735",
+                city: "Madrid",
+                country: "Spain",
+                latitude: 40.4168,
+                longitude: -3.7038,
+                population: 3266126,
+                region: "Madrid",
+                country_code: "ES",
+              },
+              radius_km: 1800,
+              min_population: 250000,
+              candidate_limit: 10,
+              result_count: 2,
+            },
+          },
+        ]),
+    });
+
+    render(<Page />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Select Saved Paris weekend/ })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Select Saved Paris weekend/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Lisbon, Portugal")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "7 attractions nearby" })).toHaveLength(2);
+    });
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).endsWith("/recommendation-searches/saved-search/recommendations"),
+      ),
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).endsWith(`/recommendation-searches/saved-search/cities/${lisbon.id}/intelligence`),
+      ),
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).endsWith("/recommendation-searches/saved-search/cities"),
+      ),
+    ).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/cities/${lisbon.id}/score`)),
+    ).toBe(false);
+  });
+
+  it("does not fetch saved recommendations when selected saved range has no results", async () => {
+    const fetchMock = installSearchFetch({
+      travelWindows: async () =>
+        ok([
+          {
+            id: "range-empty",
+            label: "Empty weekend",
+            start_date: "2026-05-22",
+            end_date: "2026-05-25",
+            status: "candidate",
+            latest_search: {
+              id: "saved-search",
+              home_city_id: "3117735",
+              home_city: {
+                id: "3117735",
+                city: "Madrid",
+                country: "Spain",
+                latitude: 40.4168,
+                longitude: -3.7038,
+                population: 3266126,
+                region: "Madrid",
+                country_code: "ES",
+              },
+              radius_km: 1800,
+              min_population: 250000,
+              candidate_limit: 10,
+              result_count: 0,
+            },
+          },
+        ]),
+    });
+
+    render(<Page />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Select Empty weekend/ })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Select Empty weekend/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Select Empty weekend/ })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).endsWith("/recommendation-searches/saved-search/recommendations"),
+      ),
+    ).toBe(false);
+  });
+
   it("deletes a date range from the API before removing it from the saved range list", async () => {
     const fetchMock = installSearchFetch();
     render(<Page />);
@@ -339,6 +463,7 @@ describe("Solo homepage", () => {
     await waitFor(() => {
       expect(screen.getByText("Lisbon, Portugal")).toBeInTheDocument();
     });
+    expect(screen.getByLabelText("Lisbon city marker")).toBeInTheDocument();
     expect(screen.getAllByLabelText("Loading score").length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText("Loading destination score").length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText("Loading destination details").length).toBeGreaterThan(0);
@@ -364,6 +489,49 @@ describe("Solo homepage", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/${lisbon.id}/intelligence`))).toBe(true);
   });
 
+  it("keeps saved attraction lists available when saved intelligence refresh fails", async () => {
+    installSearchFetch({
+      travelWindows: async () =>
+        ok([
+          {
+            id: "range-saved",
+            label: "Saved Paris weekend",
+            start_date: "2026-05-22",
+            end_date: "2026-05-25",
+            status: "candidate",
+            latest_search: {
+              id: "saved-search",
+              home_city_id: "2643743",
+              radius_km: 1800,
+              min_population: 250000,
+              candidate_limit: 10,
+              result_count: 2,
+            },
+          },
+        ]),
+      details: async () => fail(502, "Destination intelligence request failed"),
+      saved: async () =>
+        ok([
+          { ...recommendation(lisbon, 91), top_attractions: ["Belem Tower"] },
+          { ...recommendation(porto, 86), top_attractions: ["Clerigos Tower"] },
+        ]),
+    });
+
+    render(<Page />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Select Saved Paris weekend/ })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Select Saved Paris weekend/ }));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "7 attractions nearby" })).toHaveLength(2);
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: "7 attractions nearby" })[0]);
+    expect(screen.getByText("Belem Tower")).toBeInTheDocument();
+    expect(screen.queryByText("Attractions N/A")).not.toBeInTheDocument();
+  });
+
   it("sends search parameters, home city, and excluded city ids to the create-search endpoint", async () => {
     const fetchMock = installSearchFetch();
     render(<Page />);
@@ -385,12 +553,87 @@ describe("Solo homepage", () => {
       expect.objectContaining({
         home_city_id: "2643743",
         radius_km: 1800,
+        search_mode: "radius",
+        search_bounds: null,
         min_population: 500000,
         candidate_limit: 10,
         excluded_city_ids: ["2643743"],
         user_email: "solo@example.com",
         user_name: "Solo User",
         provider_subject: "solo@example.com",
+      }),
+    );
+  });
+
+  it("restores rectangle search metadata and sends rectangle bounds", async () => {
+    const fetchMock = installSearchFetch({
+      travelWindows: async () =>
+        ok([
+          {
+            id: "range-rectangle",
+            label: "Drawn area weekend",
+            start_date: "2026-05-22",
+            end_date: "2026-05-25",
+            status: "candidate",
+            latest_search: {
+              id: "saved-search",
+              home_city_id: "3117735",
+              home_city: {
+                id: "3117735",
+                city: "Madrid",
+                country: "Spain",
+                latitude: 40.4168,
+                longitude: -3.7038,
+                population: 3266126,
+                region: "Madrid",
+                country_code: "ES",
+              },
+              radius_km: 1800,
+              search_mode: "rectangle",
+              search_bounds: { west: -1, south: 48, east: 3, north: 52 },
+              min_population: 250000,
+              candidate_limit: 10,
+              result_count: 0,
+            },
+          },
+        ]),
+    });
+    render(<Page />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Select Drawn area weekend/ })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Select Drawn area weekend/ }));
+
+    expect(screen.getByRole("button", { name: "Rectangle" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.queryByLabelText("Search radius")).not.toBeInTheDocument();
+    expect(screen.getByText(/Area selected:/)).toHaveTextContent(
+      "48.00 to 52.00 lat, -1.00 to 3.00 lng",
+    );
+    await waitFor(() => {
+      expect(screen.getByLabelText("Home city")).toHaveValue("Madrid");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Find destinations" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) => String(url).endsWith("/recommendation-searches")),
+      ).toBe(true);
+    });
+    const createCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/recommendation-searches"),
+    );
+    const payload = JSON.parse(String(createCall?.[1]?.body));
+    expect(payload).toEqual(
+      expect.objectContaining({
+        home_city_id: "3117735",
+        search_mode: "rectangle",
+        search_bounds: { west: -1, south: 48, east: 3, north: 52 },
+        excluded_city_ids: ["3117735"],
       }),
     );
   });

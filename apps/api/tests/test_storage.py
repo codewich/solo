@@ -100,6 +100,22 @@ def test_list_travel_windows_reads_user_windows_in_date_order(monkeypatch):
                 "start_date": date(2026, 5, 22),
                 "end_date": date(2026, 5, 25),
                 "status": "candidate",
+                "latest_search_id": "search-1",
+                "home_city_id": "2643743",
+                "home_city_name": "London",
+                "home_city_country": "United Kingdom",
+                "home_city_timezone": "Europe/London",
+                "home_city_latitude": 51.5072,
+                "home_city_longitude": -0.1276,
+                "home_city_population": 8961989,
+                "home_city_region": "England",
+                "home_city_country_code": "GB",
+                "radius_km": 1800,
+                "search_mode": "rectangle",
+                "search_bounds": {"west": -1.0, "south": 48.0, "east": 3.0, "north": 52.0},
+                "min_population": 250000,
+                "candidate_limit": 10,
+                "result_count": 2,
             }
         ]
 
@@ -108,11 +124,20 @@ def test_list_travel_windows_reads_user_windows_in_date_order(monkeypatch):
     windows = list_travel_windows(user_id="user-1")
 
     assert "from travel_windows" in captured["sql"]
-    assert "where user_id = %s" in captured["sql"]
-    assert "order by start_date asc, created_at asc" in captured["sql"]
+    assert "where w.user_id = %s" in captured["sql"]
+    assert "order by w.start_date asc, w.created_at asc" in captured["sql"]
     assert captured["params"] == ["user-1"]
     assert windows[0].id == "range-saved"
     assert windows[0].label == "Saved Paris weekend"
+    assert windows[0].latest_search is not None
+    assert windows[0].latest_search.id == "search-1"
+    assert windows[0].latest_search.home_city is not None
+    assert windows[0].latest_search.home_city.city == "London"
+    assert windows[0].latest_search.home_city.country_code == "GB"
+    assert windows[0].latest_search.search_mode == "rectangle"
+    assert windows[0].latest_search.search_bounds is not None
+    assert windows[0].latest_search.search_bounds.east == 3.0
+    assert windows[0].latest_search.result_count == 2
 
 
 def test_get_air_quality_normal_reads_city_year_month(monkeypatch):

@@ -55,6 +55,8 @@ import type {
   HomeLocation,
   PublicHoliday,
   Recommendation,
+  SearchBounds,
+  SearchMode,
   TravelWindow,
 } from "@/lib/types";
 
@@ -95,6 +97,12 @@ type CandidateCard = {
   detailsLoading: boolean;
   order: number;
 };
+
+function formatSearchBounds(bounds: SearchBounds): string {
+  return `${bounds.south.toFixed(2)} to ${bounds.north.toFixed(2)} lat, ${bounds.west.toFixed(
+    2,
+  )} to ${bounds.east.toFixed(2)} lng`;
+}
 
 const defaultHomeCity: SelectedCity = {
   id: "2643743",
@@ -309,7 +317,18 @@ function DestinationCandidateCard({
   const imageUrl = recommendation?.image_url ?? recommendation?.imageUrl;
   const climate = recommendation?.climate ?? card.intelligence?.climate;
   const attractionCount = recommendation?.attraction_count ?? recommendation?.attractionCount;
-  const attractions = card.intelligence?.attractions ?? [];
+  const savedAttractions =
+    recommendation?.top_attractions?.map((name) => ({
+      name,
+      category: "attraction",
+      description: null,
+      source: "Saved recommendation",
+    })) ?? [];
+  const attractions =
+    card.intelligence?.attractions && card.intelligence.attractions.length > 0
+      ? card.intelligence.attractions
+      : savedAttractions;
+  const hasAttractions = attractions.length > 0;
   const cardStyle = imageUrl
     ? {
         backgroundImage: `linear-gradient(rgba(23, 33, 29, 0.72), rgba(23, 33, 29, 0.72)), url(${imageUrl})`,
@@ -409,10 +428,12 @@ function DestinationCandidateCard({
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled={card.detailsError !== undefined || attractions.length === 0}
+                      disabled={!hasAttractions}
                     >
                       <ListChecks data-icon="inline-start" />
-                      {card.detailsError ? "Attractions N/A" : `${attractionCount ?? attractions.length} attractions nearby`}
+                      {hasAttractions
+                        ? `${attractionCount ?? attractions.length} attractions nearby`
+                        : "Attractions N/A"}
                     </Button>
                   </DialogTrigger>
                   <DialogContent>
@@ -468,6 +489,9 @@ export default function Page() {
   const [editingWindowId, setEditingWindowId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState("");
   const [radiusKm, setRadiusKm] = useState(1800);
+  const [searchMode, setSearchMode] = useState<SearchMode>("radius");
+  const [searchBounds, setSearchBounds] = useState<SearchBounds | null>(null);
+  const [isDrawingRectangle, setIsDrawingRectangle] = useState(false);
   const [minPopulation, setMinPopulation] = useState(250000);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [buttonProgressLabel, setButtonProgressLabel] = useState("Find destinations");
@@ -526,25 +550,19 @@ export default function Page() {
       }),
     [candidateCards],
   );
-  const readyRecommendations = sortedCandidateCards
-    .map((card) => card.recommendation)
-    .filter(
-      (recommendation): recommendation is Recommendation =>
-        Boolean(recommendation?.destination),
-    );
   const mapDestinations = useMemo(
     () =>
-      readyRecommendations.slice(0, 5).map((item) => ({
-        city: item.destination.city,
-        country: item.destination.country,
-        score: item.score,
-        summary: item.reasons[0],
+      sortedCandidateCards.map((card) => ({
+        city: card.destination.city,
+        country: card.destination.country,
+        score: card.recommendation?.score,
+        summary: card.recommendation?.reasons[0],
         coordinates:
-          typeof item.destination.longitude === "number" && typeof item.destination.latitude === "number"
-            ? ([item.destination.longitude, item.destination.latitude] as [number, number])
+          typeof card.destination.longitude === "number" && typeof card.destination.latitude === "number"
+            ? ([card.destination.longitude, card.destination.latitude] as [number, number])
             : undefined,
       })),
-    [readyRecommendations],
+    [sortedCandidateCards],
   );
 
   useEffect(() => {
@@ -798,6 +816,80 @@ export default function Page() {
     }
   }
 
+  async function loadSavedResultsForWindow(window: PlanningWindow) {
+    const searchId = window.latest_search?.id;
+    if (!searchId || (window.latest_search?.result_count ?? 0) <= 0) {
+      setCandidateCards([]);
+      setActiveSearchId(null);
+      return;
+    }
+
+    setStatus("loading");
+    setButtonProgressLabel("Loading saved results...");
+    setCandidateCards([]);
+    setActiveSearchId(searchId);
+
+    try {
+      const savedResults = await fetchSavedRecommendationSearchResults(searchId);
+      setCandidateCards(
+        savedResults.map((recommendation, order) => ({
+          destination: recommendation.destination,
+          recommendation,
+          scoring: false,
+          detailsLoading: true,
+          order,
+        })),
+      );
+      await Promise.allSettled(
+        savedResults.map((recommendation) =>
+          loadCityDetails(searchId, recommendation.destination),
+        ),
+      );
+      setStatus("ready");
+    } catch (reason) {
+      setStatus("error");
+      showPersistentError(errorMessage(reason, "Could not load saved recommendations."));
+    } finally {
+      setButtonProgressLabel("Find destinations");
+    }
+  }
+
+  function handleTravelWindowSelect(window: PlanningWindow) {
+    if (status === "loading") {
+      return;
+    }
+    setSelectedTravelWindowId(window.id);
+    setSearchMode(window.latest_search?.search_mode ?? "radius");
+    setSearchBounds(window.latest_search?.search_bounds ?? null);
+    if (window.latest_search?.home_city) {
+      const savedHomeCity = window.latest_search.home_city;
+      const nextHome = {
+        id: savedHomeCity.id,
+        city: savedHomeCity.city,
+        country: savedHomeCity.country,
+        admin1: savedHomeCity.region,
+        latitude: savedHomeCity.latitude ?? defaultHomeCity.latitude,
+        longitude: savedHomeCity.longitude ?? defaultHomeCity.longitude,
+        country_code: savedHomeCity.country_code,
+      };
+      setHomeLocation(nextHome);
+      setHomeQuery(nextHome.city);
+      setHomeSuggestions([]);
+    }
+    if (window.latest_search?.radius_km) {
+      setRadiusKm(window.latest_search.radius_km);
+    }
+    if (window.latest_search?.min_population !== undefined) {
+      setMinPopulation(window.latest_search.min_population);
+    }
+    setIsDrawingRectangle(false);
+    showMonthForDate(window.start_date);
+    setIsAddingRange(false);
+    setDraftRange(null);
+    setIsDraftComplete(false);
+    void loadSavedResultsForWindow(window);
+  }
+
   async function handleFindDestinations() {
     if (!canManageTravelWindows) {
       showPersistentError("Sign in to save travel windows and find destinations.");
@@ -810,6 +902,11 @@ export default function Page() {
       : selectedTravelWindow;
 
     if (!targetWindow) {
+      return;
+    }
+
+    if (searchMode === "rectangle" && !searchBounds) {
+      showPersistentError("Draw a rectangle on the map before finding destinations.");
       return;
     }
 
@@ -837,6 +934,8 @@ export default function Page() {
         },
         home_city_id: homeLocation.id,
         radius_km: radiusKm,
+        search_mode: searchMode,
+        search_bounds: searchMode === "rectangle" ? searchBounds : null,
         min_population: minPopulation,
         candidate_limit: 10,
         excluded_city_ids: [homeLocation.id, ...excludedCities.map((city) => city.id)],
@@ -853,9 +952,14 @@ export default function Page() {
             destination: recommendation.destination,
             recommendation,
             scoring: false,
-            detailsLoading: false,
+            detailsLoading: true,
             order,
           })),
+        );
+        await Promise.allSettled(
+          savedResults.map((recommendation) =>
+            loadCityDetails(search.id, recommendation.destination),
+          ),
         );
         setButtonProgressLabel("Find destinations");
         setStatus("ready");
@@ -923,6 +1027,7 @@ export default function Page() {
       setDraftRange(null);
       setIsDraftComplete(false);
       setSelectedTravelWindowId(null);
+      setIsDrawingRectangle(false);
       return;
     }
     if (!draftRange || !isDraftComplete) {
@@ -998,6 +1103,7 @@ export default function Page() {
           setHomeLocation(nextHome);
           setHomeQuery(nextHome.city);
           setHomeSuggestions([]);
+          setIsDrawingRectangle(false);
         } catch (reason) {
           showPersistentError(errorMessage(reason, "Could not find the nearest city."));
         }
@@ -1041,6 +1147,7 @@ export default function Page() {
                             setHomeLocation(nextHome);
                             setHomeQuery(nextHome.city);
                             setHomeSuggestions([]);
+                            setIsDrawingRectangle(false);
                           }}
                         >
                           {suggestion.name}, {suggestion.country}
@@ -1160,13 +1267,7 @@ export default function Page() {
                               variant="outline"
                               disabled={status === "loading"}
                               aria-label={`Select ${window.label}`}
-                              onClick={() => {
-                                setSelectedTravelWindowId(window.id);
-                                showMonthForDate(window.start_date);
-                                setIsAddingRange(false);
-                                setDraftRange(null);
-                                setIsDraftComplete(false);
-                              }}
+                              onClick={() => handleTravelWindowSelect(window)}
                             >
                               <span>
                                 <strong>{window.dates}</strong>
@@ -1282,19 +1383,75 @@ export default function Page() {
                 <CardTitle>Search area</CardTitle>
               </CardHeader>
               <CardContent className="stack">
-                <div className="field-stack">
-                  <Label htmlFor="search-radius">Search radius: {radiusKm} km</Label>
-                  <Slider
-                    id="search-radius"
-                    aria-label="Search radius"
-                    min={100}
-                    max={5000}
-                    step={100}
+                <div className="search-mode-toggle" aria-label="Search mode">
+                  <Button
+                    type="button"
+                    variant={searchMode === "radius" ? "default" : "outline"}
                     disabled={status === "loading"}
-                    value={[radiusKm]}
-                    onValueChange={([nextRadius]) => setRadiusKm(nextRadius)}
-                  />
+                    aria-pressed={searchMode === "radius"}
+                    onClick={() => {
+                      setSearchMode("radius");
+                      setIsDrawingRectangle(false);
+                    }}
+                  >
+                    Radius
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={searchMode === "rectangle" ? "default" : "outline"}
+                    disabled={status === "loading"}
+                    aria-pressed={searchMode === "rectangle"}
+                    onClick={() => setSearchMode("rectangle")}
+                  >
+                    Rectangle
+                  </Button>
                 </div>
+                {searchMode === "radius" ? (
+                  <div className="field-stack">
+                    <Label htmlFor="search-radius">Search radius: {radiusKm} km</Label>
+                    <Slider
+                      id="search-radius"
+                      aria-label="Search radius"
+                      min={100}
+                      max={5000}
+                      step={100}
+                      disabled={status === "loading"}
+                      value={[radiusKm]}
+                      onValueChange={([nextRadius]) => setRadiusKm(nextRadius)}
+                    />
+                  </div>
+                ) : (
+                  <div className="field-stack rectangle-search-controls">
+                    <div className="rectangle-action-row">
+                      <Button
+                        type="button"
+                        variant={isDrawingRectangle ? "default" : "outline"}
+                        disabled={status === "loading"}
+                        onClick={() => setIsDrawingRectangle(true)}
+                      >
+                        {searchBounds ? "Redraw rectangle" : "Draw rectangle"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={status === "loading" || !searchBounds}
+                        onClick={() => {
+                          setSearchBounds(null);
+                          setIsDrawingRectangle(false);
+                        }}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                    <p className="muted">
+                      {searchBounds
+                        ? `Area selected: ${formatSearchBounds(searchBounds)}`
+                        : isDrawingRectangle
+                          ? "Drag on the map to select a rectangular search area."
+                          : "Draw a rectangle on the map. Radius is not used in this mode."}
+                    </p>
+                  </div>
+                )}
                 <div className="field-stack">
                   <Label htmlFor="minimum-population">Minimum population</Label>
                   <Input
@@ -1374,7 +1531,12 @@ export default function Page() {
                 </div>
                 <Button
                   type="button"
-                  disabled={!canManageTravelWindows || !activeRange || status === "loading"}
+                  disabled={
+                    !canManageTravelWindows ||
+                    !activeRange ||
+                    status === "loading" ||
+                    (searchMode === "rectangle" && !searchBounds)
+                  }
                   onClick={handleFindDestinations}
                 >
                   {status === "loading" ? (
@@ -1395,7 +1557,12 @@ export default function Page() {
             homeCity={homeCity}
             homeCoordinates={[homeLocation.longitude, homeLocation.latitude]}
             radiusKm={radiusKm}
-            showDestinationPins={readyRecommendations.length > 0}
+            searchMode={searchMode}
+            searchBounds={searchBounds}
+            isDrawingRectangle={isDrawingRectangle}
+            onSearchBoundsChange={setSearchBounds}
+            onDrawingRectangleChange={setIsDrawingRectangle}
+            showDestinationPins={mapDestinations.length > 0}
           />
 
           <aside className="panel right-panel stack">

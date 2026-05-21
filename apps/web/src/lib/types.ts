@@ -1,9 +1,29 @@
+export type SearchMode = "radius" | "rectangle";
+
+export type SearchBounds = {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+};
+
 export type TravelWindow = {
   id: string;
   start_date: string;
   end_date: string;
   label?: string | null;
   status?: "candidate" | "planned" | "archived";
+  latest_search?: {
+    id: string;
+    home_city_id: string;
+    home_city?: Destination | null;
+    radius_km: number;
+    search_mode?: SearchMode;
+    search_bounds?: SearchBounds | null;
+    min_population: number;
+    candidate_limit: number;
+    result_count: number;
+  } | null;
 };
 
 export type RecommendationRequest = {
@@ -164,6 +184,8 @@ export type RecommendationSearchCreateRequest = {
   travel_window: TravelWindow;
   home_city_id: string;
   radius_km: number;
+  search_mode?: SearchMode;
+  search_bounds?: SearchBounds | null;
   min_population: number;
   candidate_limit: number;
   excluded_city_ids?: string[];

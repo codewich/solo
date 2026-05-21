@@ -3,6 +3,35 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
+SearchMode = Literal["radius", "rectangle"]
+
+
+class SearchBounds(BaseModel):
+    west: float = Field(ge=-180, le=180)
+    south: float = Field(ge=-90, le=90)
+    east: float = Field(ge=-180, le=180)
+    north: float = Field(ge=-90, le=90)
+
+    @model_validator(mode="after")
+    def ensure_normal_bounds(self) -> "SearchBounds":
+        if self.west >= self.east:
+            raise ValueError("west must be less than east")
+        if self.south >= self.north:
+            raise ValueError("south must be less than north")
+        return self
+
+
+class RecommendationSearchSummary(BaseModel):
+    id: str
+    home_city_id: str
+    home_city: "Destination | None" = None
+    radius_km: int
+    min_population: int
+    candidate_limit: int
+    search_mode: SearchMode = "radius"
+    search_bounds: SearchBounds | None = None
+    result_count: int = 0
+
 
 class TravelWindow(BaseModel):
     id: str
@@ -10,6 +39,7 @@ class TravelWindow(BaseModel):
     end_date: date
     label: str | None = None
     status: Literal["candidate", "planned", "archived"] = "candidate"
+    latest_search: RecommendationSearchSummary | None = None
 
     @model_validator(mode="after")
     def ensure_valid_range(self) -> "TravelWindow":
@@ -195,12 +225,22 @@ class RecommendationSearchCreateRequest(BaseModel):
     travel_window: TravelWindow
     home_city_id: str
     radius_km: int = Field(default=1800, ge=1, le=5000)
+    search_mode: SearchMode = "radius"
+    search_bounds: SearchBounds | None = None
     min_population: int = Field(default=250000, ge=0)
     candidate_limit: int = Field(default=10, ge=1, le=50)
     excluded_city_ids: list[str] = Field(default_factory=list)
     user_email: str | None = None
     user_name: str | None = None
     provider_subject: str | None = None
+
+    @model_validator(mode="after")
+    def ensure_search_mode_shape(self) -> "RecommendationSearchCreateRequest":
+        if self.search_mode == "rectangle" and self.search_bounds is None:
+            raise ValueError("search_bounds is required for rectangle search")
+        if self.search_mode == "radius":
+            self.search_bounds = None
+        return self
 
 
 class TravelWindowDeleteRequest(BaseModel):

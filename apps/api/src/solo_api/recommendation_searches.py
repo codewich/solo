@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from solo_api.city_candidates import search_city_candidates
+from solo_api.city_candidates import search_city_candidates, search_city_candidates_in_bounds
 from solo_api.models import (
     Destination,
     DestinationIntelligence,
@@ -12,6 +12,8 @@ from solo_api.models import (
     RecommendationSearchCity,
     RecommendationSearchCreateRequest,
     RecommendationSearchCreateResponse,
+    SearchBounds,
+    SearchMode,
     TravelWindow,
     TravelWindowDeleteRequest,
 )
@@ -36,6 +38,8 @@ class MemorySearch:
     travel_window: TravelWindow
     home_city: Destination
     radius_km: int
+    search_mode: SearchMode
+    search_bounds: SearchBounds | None
     min_population: int
     candidate_limit: int
     excluded_city_ids: list[str]
@@ -61,6 +65,8 @@ def create_recommendation_search(
         travel_window=request.travel_window,
         home_city_id=request.home_city_id,
         radius_km=request.radius_km,
+        search_mode=request.search_mode,
+        search_bounds=request.search_bounds,
         min_population=request.min_population,
         candidate_limit=request.candidate_limit,
         excluded_city_ids=request.excluded_city_ids,
@@ -70,6 +76,8 @@ def create_recommendation_search(
         travel_window=request.travel_window,
         home_city=home_city,
         radius_km=request.radius_km,
+        search_mode=request.search_mode,
+        search_bounds=request.search_bounds,
         min_population=request.min_population,
         candidate_limit=request.candidate_limit,
         excluded_city_ids=request.excluded_city_ids,
@@ -98,6 +106,8 @@ def _search_from_storage(search_id: str) -> MemorySearch | None:
         ),
         home_city=home_city,
         radius_km=row["radius_km"],
+        search_mode=row.get("search_mode") or "radius",
+        search_bounds=SearchBounds.model_validate(row["search_bounds"]) if row.get("search_bounds") else None,
         min_population=row["min_population"],
         candidate_limit=row["candidate_limit"],
         excluded_city_ids=list(row.get("excluded_city_ids") or []),
@@ -117,13 +127,25 @@ def list_recommendation_search_cities(search_id: str) -> list[RecommendationSear
     search = get_search_or_error(search_id)
     excluded = set(search.excluded_city_ids)
     excluded.add(search.home_city.id)
-    destinations = search_city_candidates(
-        latitude=search.home_city.latitude or DEFAULT_CENTER_LATITUDE,
-        longitude=search.home_city.longitude or DEFAULT_CENTER_LONGITUDE,
-        radius_km=search.radius_km,
-        min_population=search.min_population,
-        limit=search.candidate_limit,
-    )
+    if search.search_mode == "rectangle":
+        if search.search_bounds is None:
+            raise ValueError("Rectangle search bounds were not found.")
+        destinations = search_city_candidates_in_bounds(
+            west=search.search_bounds.west,
+            south=search.search_bounds.south,
+            east=search.search_bounds.east,
+            north=search.search_bounds.north,
+            min_population=search.min_population,
+            limit=search.candidate_limit,
+        )
+    else:
+        destinations = search_city_candidates(
+            latitude=search.home_city.latitude or DEFAULT_CENTER_LATITUDE,
+            longitude=search.home_city.longitude or DEFAULT_CENTER_LONGITUDE,
+            radius_km=search.radius_km,
+            min_population=search.min_population,
+            limit=search.candidate_limit,
+        )
     return [
         RecommendationSearchCity(search_id=search_id, destination=destination)
         for destination in destinations
@@ -194,6 +216,8 @@ def _request_like(search: MemorySearch) -> Any:
         {
             "excluded_destination_ids": search.excluded_city_ids,
             "radius_km": search.radius_km,
+            "search_mode": search.search_mode,
+            "search_bounds": search.search_bounds,
             "min_population": search.min_population,
             "candidate_limit": search.candidate_limit,
             "region": None,
